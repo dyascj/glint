@@ -1363,7 +1363,15 @@ tell application "System Events" to tell appearance preferences to get dark mode
                 }
             }
             Msg::UpdateDone(r, result) => match result {
-                Ok(()) => updates::relaunch(),
+                Ok(()) => {
+                    // Close Settings/Onboarding first (Slat does the same), so the
+                    // relaunch starts the new launcher instead of focusing a leftover window.
+                    for child in self.windows.values_mut() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                    updates::relaunch();
+                }
                 Err(e) => {
                     self.update = updates::Status::Failed(r, e);
                     self.sync_tray();

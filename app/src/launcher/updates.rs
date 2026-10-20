@@ -205,7 +205,8 @@ pub fn install(r: &Release) -> Result<(), String> {
 pub fn relaunch() {
     let Ok(target) = bundle() else { return };
     let t = target.display().to_string().replace('\'', "'\\''");
-    let script = format!("while kill -0 {} 2>/dev/null; do sleep 0.2; done; open '{t}'", std::process::id());
+    // -n: a new instance, even if another Glint process is still around.
+    let script = format!("while kill -0 {} 2>/dev/null; do sleep 0.2; done; open -n '{t}'", std::process::id());
     if Command::new("/bin/sh").args(["-c", &script]).spawn().is_ok() {
         std::process::exit(0);
     }
