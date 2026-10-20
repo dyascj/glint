@@ -57,6 +57,7 @@ pub struct Onboarding {
     ax: bool,
     ax_requested: bool,
     next_poll: f64,
+    next_settings_poll: f64,
     rt: Runtime,
     reduce_motion: bool,
     spotlight_on: bool,
@@ -77,6 +78,7 @@ impl Onboarding {
             ax: macos::ax_trusted(),
             ax_requested: false,
             next_poll: 0.0,
+            next_settings_poll: 0.0,
             rt: runtime(),
             reduce_motion: super::reduce_motion(),
             spotlight_on: macos::spotlight_shortcut_on(),
@@ -92,7 +94,9 @@ impl Onboarding {
 
     /// Completes onboarding and closes; `start` opens the launcher.
     fn finish(&mut self, ctx: &egui::Context, start: bool) {
-        let _ = self.s.save();
+        if let Ok(m) = self.s.save_over(&self.saved) {
+            self.s = m;
+        }
         Prefs::update(|p| p.onboarding_completed = true);
         if start {
             let _ = crate::login::apply(self.s.start_at_login);
@@ -203,8 +207,21 @@ impl eframe::App for Onboarding {
         });
 
         if self.s != self.saved && ctx.dragged_id().is_none() {
-            let _ = self.s.save();
-            self.saved = self.s.clone();
+            match self.s.save_over(&self.saved) {
+                Ok(m) => {
+                    self.s = m.clone();
+                    self.saved = m;
+                }
+                Err(e) => eprintln!("{APP_NAME}: couldn't save settings: {e}"),
+            }
+        } else if self.s == self.saved && now >= self.next_settings_poll {
+            // Pick up changes made in the other window.
+            self.next_settings_poll = now + 1.0;
+            let disk = Settings::load();
+            if disk != self.saved {
+                self.s = disk.clone();
+                self.saved = disk;
+            }
         }
     }
 }

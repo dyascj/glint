@@ -81,7 +81,7 @@ An extension is any executable script in `~/Library/Application Support/Glint/Ex
 #!/bin/bash
 # @glint.title Say Hello
 # @glint.mode fullOutput
-# @glint.icon 👋
+# @glint.icon hand.wave
 # @glint.packageName My Extensions
 # @glint.argument1 { "type": "text", "placeholder": "Name" }
 
@@ -99,10 +99,10 @@ echo "Hello, $1!"
 A `list` extension prints an array like this. Each item can `copy`, `open` (a URL or `file://` path) or `paste`:
 
 ```json
-[{ "title": "Glint", "subtitle": "github.com/dyascj/glint", "icon": "🔗", "open": "https://github.com/dyascj/glint" }]
+[{ "title": "Glint", "subtitle": "github.com/dyascj/glint", "icon": "link", "open": "https://github.com/dyascj/glint" }]
 ```
 
-Up to three arguments are supported (`text` or `password`, with `"optional": true`). `@glint.keywords`, `@glint.description`, `@glint.needsConfirmation` and `@glint.currentDirectoryPath` work too.
+`icon` takes an [SF Symbol](https://developer.apple.com/sf-symbols/) name like `hand.wave`, or a path to an image, so extensions sit in the list with the same icons as everything else. Up to three arguments are supported (`text` or `password`, with `"optional": true`). `@glint.keywords`, `@glint.description`, `@glint.packageName` and `@glint.currentDirectoryPath` work too.
 
 **Raycast script commands work as is.** Glint reads the `@raycast.` metadata, so you can drop scripts from [raycast/script-commands](https://github.com/raycast/script-commands) into the Extensions folder. Settings › Extensions › Add Samples installs four examples, one for each common mode.
 

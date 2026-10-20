@@ -63,6 +63,7 @@ pub struct Quicklink {
     pub name: String,
     /// `{query}` is replaced with the (URL-encoded) argument.
     pub url: String,
+    /// An SF Symbol name (or an image path).
     #[serde(default)]
     pub icon: String,
 }
@@ -94,13 +95,13 @@ pub fn save_quicklinks(q: &[Quicklink]) {
 
 fn default_quicklinks() -> Vec<Quicklink> {
     [
-        ("Search Google", "https://www.google.com/search?q={query}", "🔎"),
-        ("Search DuckDuckGo", "https://duckduckgo.com/?q={query}", "🦆"),
-        ("Search GitHub", "https://github.com/search?q={query}", "🐙"),
-        ("Search YouTube", "https://www.youtube.com/results?search_query={query}", "▶️"),
-        ("Search Wikipedia", "https://en.wikipedia.org/w/index.php?search={query}", "📚"),
-        ("Search Maps", "maps://?q={query}", "🗺️"),
-        ("Define Word", "dict://{query}", "📖"),
+        ("Search Google", "https://www.google.com/search?q={query}", "globe"),
+        ("Search DuckDuckGo", "https://duckduckgo.com/?q={query}", "magnifyingglass.circle"),
+        ("Search GitHub", "https://github.com/search?q={query}", "chevron.left.forwardslash.chevron.right"),
+        ("Search YouTube", "https://www.youtube.com/results?search_query={query}", "play.rectangle"),
+        ("Search Wikipedia", "https://en.wikipedia.org/w/index.php?search={query}", "book.closed"),
+        ("Search Maps", "maps://?q={query}", "map"),
+        ("Define Word", "dict://{query}", "character.book.closed"),
     ]
     .iter()
     .map(|(n, u, i)| Quicklink { name: n.to_string(), url: u.to_string(), icon: i.to_string() })

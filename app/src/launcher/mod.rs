@@ -116,8 +116,9 @@ pub enum View {
     Extensions,
     Processes,
     Ramp(Rgb),
-    Output { title: String, text: Option<String>, ok: bool, rerun: (usize, Vec<String>), token: u64 },
-    List { script: usize, items: Vec<ListItem>, error: Option<String>, token: u64, asked: Option<String>, due: Option<f64> },
+    /// Extension views hold the script's path; indices shift when the folder reloads.
+    Output { title: String, text: Option<String>, ok: bool, rerun: (PathBuf, Vec<String>), token: u64 },
+    List { script: PathBuf, items: Vec<ListItem>, error: Option<String>, token: u64, asked: Option<String>, due: Option<f64> },
     Args { title: String, target: ArgsFor, values: Vec<String>, placeholders: Vec<String>, secure: Vec<bool>, focus: usize },
     Form(Form),
 }
@@ -204,6 +205,8 @@ pub struct Launcher {
     file_token: u64,
     pub file_results: Vec<PathBuf>,
     file_for: String,
+    /// How many results `file_results` was asked for.
+    file_limit: usize,
     file_due: Option<f64>,
     pub file_loading: bool,
     pub sections: Vec<Section>,
@@ -305,6 +308,7 @@ impl Launcher {
             file_token: 0,
             file_results: Vec::new(),
             file_for: String::new(),
+            file_limit: 0,
             file_due: None,
             file_loading: false,
             sections: Vec::new(),
@@ -441,9 +445,8 @@ impl Launcher {
     }
 
     fn tried(&mut self, what: &str) {
-        if self.runtime.tried.insert(what.to_string()) {
-            self.write_runtime();
-        } else if what == "open" {
+        // "open" is counted every time; the rest only the first.
+        if self.runtime.tried.insert(what.to_string()) || what == "open" {
             self.write_runtime();
         }
     }
@@ -521,12 +524,16 @@ impl Launcher {
         self.sections = sections;
         self.sections_key = key;
         let n = self.sections.iter().map(|s| s.items.len()).sum::<usize>();
+        // Grids (emoji, colors) have no sections; they clamp themselves.
+        let grid = matches!(self.page().view, View::Emoji | View::Colors);
         let page = self.page_mut();
         if !same_page {
             // New text: the best match is on top.
             page.selected = 0;
         }
-        page.selected = page.selected.min(n.saturating_sub(1));
+        if !grid {
+            page.selected = page.selected.min(n.saturating_sub(1));
+        }
     }
 
     /// File search runs a beat after typing stops, for root and Search Files.
@@ -551,7 +558,8 @@ impl Launcher {
             }
             return;
         }
-        if q != self.file_for {
+        let limit = if matches!(self.page().view, View::Files) { 60 } else { 12 };
+        if q != self.file_for || limit > self.file_limit {
             if self.file_due.is_none() {
                 self.file_due = Some(now + 0.12);
             }
@@ -559,8 +567,8 @@ impl Launcher {
                 self.file_due = None;
                 self.file_token += 1;
                 self.file_for = q.clone();
+                self.file_limit = limit;
                 self.file_loading = true;
-                let limit = if matches!(self.page().view, View::Files) { 60 } else { 12 };
                 self.files.request(self.file_token, &q, self.settings.file_scope, limit);
                 if matches!(self.page().view, View::Files) {
                     self.tried("file");
@@ -634,6 +642,18 @@ impl Launcher {
                 macos::copy(&s);
                 self.hide(now);
                 self.hud("Copied to Clipboard");
+            }
+            Run::PasteFile(p) => {
+                macos::copy_file(&p);
+                self.hide(now);
+                if self.settings.paste_on_select && macos::ax_trusted() {
+                    std::thread::spawn(|| {
+                        std::thread::sleep(Duration::from_millis(160));
+                        macos::paste();
+                    });
+                } else {
+                    self.hud("Copied File");
+                }
             }
             Run::CopyFile(p) => {
                 macos::copy_file(&p);
@@ -739,7 +759,11 @@ impl Launcher {
             }
             Run::SubmitForm => self.submit_form(now),
             Run::SubmitArgs => self.submit_args(now),
-            Run::Rerun(i, args) => self.run_script(i, args, now),
+            Run::Rerun(path, args) => {
+                if let Some(i) = self.scripts.iter().position(|s| s.path == path) {
+                    self.run_script(i, args, now);
+                }
+            }
             Run::Calculation(input, raw) => {
                 data::push_calculation(&input, &raw);
                 self.tried("calc");
@@ -939,7 +963,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
                 });
             }
             Mode::FullOutput => {
-                let view = View::Output { title: s.title.clone(), text: None, ok: true, rerun: (i, args.clone()), token };
+                let view = View::Output { title: s.title.clone(), text: None, ok: true, rerun: (s.path.clone(), args.clone()), token };
                 if matches!(self.page().view, View::Output { .. }) {
                     self.page_mut().view = view;
                 } else {
@@ -957,7 +981,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
             }
             Mode::List => {
                 let q = if self.stack.len() == 1 { String::new() } else { self.page().query.clone() };
-                self.push(View::List { script: i, items: Vec::new(), error: None, token, asked: None, due: Some(now) }, q);
+                self.push(View::List { script: s.path.clone(), items: Vec::new(), error: None, token, asked: None, due: Some(now) }, q);
             }
         }
     }
@@ -977,7 +1001,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
             *due = None;
             *asked = Some(q.clone());
             *token = next;
-            if let Some(s) = scripts.get(*script).cloned() {
+            if let Some(s) = scripts.iter().find(|s| &s.path == script).cloned() {
                 std::thread::spawn(move || {
                     let out = scripts::run(&s, &[q], Duration::from_secs(15));
                     let parsed = if out.ok { scripts::parse_list(&out.text) } else { Err(out.text) };
@@ -1178,7 +1202,9 @@ tell application "System Events" to tell appearance preferences to get dark mode
                 self.show(now);
                 self.stack.truncate(1);
             }
-            self.run(Run::Quicklink(i, None), id, now);
+            // A link without {query} opens directly; one with it asks first.
+            let q = (!self.quicklinks[i].takes_query()).then(String::new);
+            self.run(Run::Quicklink(i, q), id, now);
         }
     }
 
@@ -1413,7 +1439,7 @@ fn form(kind: FormKind) -> Form {
         FormKind::Quicklink => vec![
             ("Name", String::new(), "Search Figma", false),
             ("Link", String::new(), "https://www.figma.com/files/search?query={query}", false),
-            ("Icon", String::new(), "An emoji, like 🎨 (optional)", false),
+            ("Icon", String::new(), "An SF Symbol name, like paintbrush (optional)", false),
         ],
         FormKind::Snippet => vec![
             ("Name", String::new(), "Email signature", false),

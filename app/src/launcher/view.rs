@@ -140,12 +140,12 @@ impl Launcher {
                 None => (String::new(), vec![]),
             },
             View::Output { text, rerun, .. } => {
-                let path = self.scripts.get(rerun.0).map(|s| s.path.clone()).unwrap_or_default();
+                let path = rerun.0.clone();
                 (
                     String::new(),
                     vec![
                         a("Copy Output", "doc.on.doc", None, Run::Copy(text.clone().unwrap_or_default())),
-                        a("Run Again", "arrow.clockwise", Some(Shortcut::cmd(Key::R)), Run::Rerun(rerun.0, rerun.1.clone())),
+                        a("Run Again", "arrow.clockwise", Some(Shortcut::cmd(Key::R)), Run::Rerun(rerun.0.clone(), rerun.1.clone())),
                         a("Edit Script", "pencil", Some(Shortcut::cmd(Key::E)), Run::EditFile(path.clone())),
                         a("Show in Finder", "folder", Some(Shortcut::cmd_shift(Key::F)), Run::Reveal(path)),
                     ],
@@ -381,7 +381,7 @@ impl Launcher {
                 let (br, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
                 let fill = if resp.hovered() { p.knob } else { p.chip };
                 ui.painter().rect_filled(br, 8, fill);
-                ui.painter().text(br.center(), Align2::CENTER_CENTER, "←", FontId::monospace(14.0), p.ink);
+                ui.painter().text(br.center(), Align2::CENTER_CENTER, "←", FontId::proportional(14.0), p.ink);
                 if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
                     self.pop();
                     return;
@@ -395,7 +395,7 @@ impl Launcher {
                     for i in 0..values.len() {
                         let id = page_id.with(("arg", i));
                         let resp = Frame::new().fill(p.raised).stroke(Stroke::new(1.0, if *focus == i { p.focus } else { p.line })).corner_radius(8).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
-                            ui.add(TextEdit::singleline(&mut values[i]).id(id).frame(Frame::NONE).password(secure[i]).font(FontId::monospace(14.0)).desired_width(150.0)
+                            ui.add(TextEdit::singleline(&mut values[i]).id(id).frame(Frame::NONE).password(secure[i]).font(FontId::proportional(14.0)).desired_width(150.0)
                                 .hint_text(text(placeholders[i].clone(), 14.0, REGULAR).color(p.dim)))
                         }).inner;
                         if resp.gained_focus() {
@@ -418,10 +418,10 @@ impl Launcher {
                         TextEdit::singleline(&mut page.query)
                             .id(id)
                             .frame(Frame::NONE)
-                            .font(FontId::monospace(17.0))
+                            .font(FontId::proportional(18.0))
                             .text_color(p.bright)
                             .desired_width(ui.available_width())
-                            .hint_text(text(hint, 17.0, REGULAR).color(p.dim)),
+                            .hint_text(text(hint, 18.0, REGULAR).color(p.dim)),
                     );
                     if resp.changed() {
                         self.scroll_to_selected = true;
@@ -473,7 +473,7 @@ impl Launcher {
         };
         let c = r.center() - vec2(0.0, 20.0);
         art::mark_colored(ui.painter(), Rect::from_center_size(c - vec2(0.0, 26.0), vec2(30.0, 24.0)), p.faint, p.dim);
-        ui.painter().text(c + vec2(0.0, 8.0), Align2::CENTER_CENTER, title, FontId::monospace(13.0), p.muted);
+        ui.painter().text(c + vec2(0.0, 8.0), Align2::CENTER_CENTER, title, FontId::proportional(13.0), p.muted);
         ui.painter().text(c + vec2(0.0, 28.0), Align2::CENTER_CENTER, sub, FontId::proportional(12.0), p.dim);
     }
 
@@ -513,7 +513,10 @@ impl Launcher {
             }
             ui.add_space(6.0);
         });
-        if let Some(h) = hovered {
+        // With ⌘K open, the panel's actions stay bound to the row they were opened on.
+        if let Some(h) = hovered
+            && self.actions.is_none()
+        {
             self.page_mut().selected = h;
         }
         if let Some(c) = clicked {
@@ -666,14 +669,14 @@ impl Launcher {
                         None => {
                             ui.painter().rect_stroke(sw, 10, Stroke::new(1.0, p.line), StrokeKind::Inside);
                             icons.paint(ui.painter(), &Img::Symbol("eyedropper"), Rect::from_center_size(sw.center(), vec2(24.0, 24.0)), p.ink);
-                            ui.painter().text(pos2(r.center().x, sw.bottom() + 12.0), Align2::CENTER_CENTER, "Pick Color", FontId::monospace(11.0), p.muted);
+                            ui.painter().text(pos2(r.center().x, sw.bottom() + 12.0), Align2::CENTER_CENTER, "Pick Color", FontId::proportional(11.0), p.muted);
                         }
                         Some((_, c)) => {
                             let [rr, gg, bb, aa] = c.u8();
                             ui.painter().rect_filled(sw, 10, Color32::from_rgba_unmultiplied(rr, gg, bb, aa));
                             ui.painter().rect_stroke(sw, 10, Stroke::new(1.0, p.line), StrokeKind::Inside);
-                            let label = if fmt == ColorFormat::Hex { c.hex() } else { c.hex() };
-                            ui.painter().text(pos2(r.center().x, sw.bottom() + 12.0), Align2::CENTER_CENTER, label, FontId::monospace(11.0), if idx == selected { p.bright } else { p.muted });
+                            let label = c.format(fmt);
+                            ui.painter().text(pos2(r.center().x, sw.bottom() + 12.0), Align2::CENTER_CENTER, label, FontId::proportional(11.0), if idx == selected { p.bright } else { p.muted });
                         }
                     }
                     if resp.clicked() {
@@ -730,7 +733,7 @@ impl Launcher {
                     let id = page_id.with(i);
                     let resp = Frame::new().fill(p.raised).stroke(Stroke::new(1.0, if f.focus == i { p.focus } else { p.line })).corner_radius(8).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
                         let te = if *multi { TextEdit::multiline(value).desired_rows(6) } else { TextEdit::singleline(value) };
-                        ui.add(te.id(id).frame(Frame::NONE).font(FontId::monospace(13.0)).desired_width(f32::INFINITY).hint_text(text(*hint, 13.0, REGULAR).color(p.dim)))
+                        ui.add(te.id(id).frame(Frame::NONE).font(FontId::proportional(13.0)).desired_width(f32::INFINITY).hint_text(text(*hint, 13.0, REGULAR).color(p.dim)))
                     }).inner;
                     if resp.gained_focus() {
                         f.focus = i;
@@ -856,7 +859,7 @@ impl Launcher {
                         let ir = Rect::from_center_size(pos2(r.left() + 18.0, r.center().y), vec2(15.0, 15.0));
                         icons.paint(ui.painter(), &Img::Symbol(a.symbol), ir, p.muted);
                         let color = if a.run_is_destructive() { p.danger } else { p.ink };
-                        ui.painter().text(pos2(r.left() + 36.0, r.center().y), Align2::LEFT_CENTER, &a.title, FontId::monospace(12.5), color);
+                        ui.painter().text(pos2(r.left() + 36.0, r.center().y), Align2::LEFT_CENTER, &a.title, FontId::proportional(12.5), color);
                         let caps = if i == 0 { vec!["↵".to_string()] } else { a.shortcut.map(|s| s.caps()).unwrap_or_default() };
                         let mut x = r.right() - 8.0;
                         for c in caps.iter().rev() {
@@ -878,7 +881,7 @@ impl Launcher {
                 ui.add_space(4.0);
                 theme::hairline(ui);
                 ui.add_space(6.0);
-                let resp = ui.add(TextEdit::singleline(&mut panel.query).id(Id::unique("actions-q")).frame(Frame::NONE).font(FontId::monospace(12.5)).margin(Margin::symmetric(8, 4)).desired_width(f32::INFINITY).hint_text(text("Search for actions…", 12.5, REGULAR).color(p.dim)));
+                let resp = ui.add(TextEdit::singleline(&mut panel.query).id(Id::unique("actions-q")).frame(Frame::NONE).font(FontId::proportional(12.5)).margin(Margin::symmetric(8, 4)).desired_width(f32::INFINITY).hint_text(text("Search for actions…", 12.5, REGULAR).color(p.dim)));
                 resp.request_focus();
                 if resp.changed() {
                     panel.selected = 0;
@@ -937,7 +940,7 @@ impl Action {
 fn section_title(ui: &mut Ui, title: &str) {
     let p = pal();
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-    ui.painter().text(pos2(r.left() + 10.0, r.bottom() - 9.0), Align2::LEFT_CENTER, title.to_lowercase(), FontId::monospace(11.0), p.dim);
+    ui.painter().text(pos2(r.left() + 10.0, r.bottom() - 9.0), Align2::LEFT_CENTER, title.to_lowercase(), FontId::proportional(11.0), p.dim);
 }
 
 fn paint_icon(ui: &Ui, icons: &mut Icons, icon: &Icon, r: Rect, selected: bool) {
@@ -990,25 +993,25 @@ fn row(ui: &mut Ui, icons: &mut Icons, it: &Item, selected: bool, hotkey: Option
                 let w = s.chars().count() as f32 * size * 0.6;
                 if w > max { (size * max / w).max(11.0) } else { size }
             };
-            painter.text(left.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, input, FontId::monospace(fit(input, half - 30.0, 17.0)), p.ink);
-            painter.text(right.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, &answer.text, FontId::monospace(fit(&answer.text, half - 30.0, 24.0)), p.bright);
-            painter.text(left.center_bottom() - vec2(0.0, 16.0), Align2::CENTER_CENTER, "Expression", FontId::monospace(10.5), p.dim);
-            painter.text(right.center_bottom() - vec2(0.0, 16.0), Align2::CENTER_CENTER, answer.unit.unwrap_or("Answer"), FontId::monospace(10.5), p.dim);
+            painter.text(left.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, input, FontId::proportional(fit(input, half - 30.0, 17.0)), p.ink);
+            painter.text(right.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, &answer.text, FontId::proportional(fit(&answer.text, half - 30.0, 24.0)), p.bright);
+            painter.text(left.center_bottom() - vec2(0.0, 16.0), Align2::CENTER_CENTER, "Expression", FontId::proportional(10.5), p.dim);
+            painter.text(right.center_bottom() - vec2(0.0, 16.0), Align2::CENTER_CENTER, answer.unit.unwrap_or("Answer"), FontId::proportional(10.5), p.dim);
             painter.vline(card.center().x, (card.top() + 10.0)..=(card.bottom() - 10.0), Stroke::new(1.0, p.line));
             let ar = Rect::from_center_size(card.center(), vec2(24.0, 24.0));
             painter.rect_filled(ar, 12, p.elevated);
             painter.rect_stroke(ar, 12, Stroke::new(1.0, p.line), StrokeKind::Inside);
-            painter.text(ar.center(), Align2::CENTER_CENTER, "→", FontId::monospace(12.0), p.muted);
+            painter.text(ar.center(), Align2::CENTER_CENTER, "→", FontId::proportional(12.0), p.muted);
         }
         Kind::Color(c) => {
             let sw = Rect::from_min_size(pos2(bg.left() + 12.0, bg.center().y - 20.0), vec2(40.0, 40.0));
             let [rr, gg, bb, aa] = c.u8();
             painter.rect_filled(sw, 9, Color32::from_rgba_unmultiplied(rr, gg, bb, aa));
             painter.rect_stroke(sw, 9, Stroke::new(1.0, p.line), StrokeKind::Inside);
-            painter.text(pos2(sw.right() + 14.0, bg.center().y - 9.0), Align2::LEFT_CENTER, &it.title, FontId::monospace(15.0), p.bright);
+            painter.text(pos2(sw.right() + 14.0, bg.center().y - 9.0), Align2::LEFT_CENTER, &it.title, FontId::proportional(15.0), p.bright);
             let others = [ColorFormat::Rgb, ColorFormat::Hsl, ColorFormat::Oklch].map(|f| c.format(f)).join("   ");
-            painter.text(pos2(sw.right() + 14.0, bg.center().y + 11.0), Align2::LEFT_CENTER, others, FontId::monospace(11.0), p.muted);
-            painter.text(pos2(bg.right() - 14.0, bg.center().y), Align2::RIGHT_CENTER, "Color", FontId::monospace(11.0), p.dim);
+            painter.text(pos2(sw.right() + 14.0, bg.center().y + 11.0), Align2::LEFT_CENTER, others, FontId::proportional(11.0), p.muted);
+            painter.text(pos2(bg.right() - 14.0, bg.center().y), Align2::RIGHT_CENTER, "Color", FontId::proportional(11.0), p.dim);
         }
         Kind::Row => {
             let ir = Rect::from_center_size(pos2(bg.left() + 22.0, bg.center().y), vec2(22.0, 22.0));
@@ -1028,20 +1031,20 @@ fn row(ui: &mut Ui, icons: &mut Icons, it: &Item, selected: bool, hotkey: Option
                 right_x -= 8.0;
             }
             if !it.accessory.is_empty() {
-                let g = painter.layout_no_wrap(it.accessory.clone(), FontId::monospace(11.0), p.dim);
+                let g = painter.layout_no_wrap(it.accessory.clone(), FontId::proportional(11.0), p.dim);
                 painter.galley(pos2(right_x - g.size().x, bg.center().y - g.size().y / 2.0), g.clone(), p.dim);
                 right_x -= g.size().x + 14.0;
             }
             let x = ir.right() + 12.0;
             let avail = (right_x - x).max(40.0);
             let title_color = if selected { p.bright } else { p.ink };
-            let tg = painter.layout(it.title.clone(), FontId::monospace(13.0), title_color, f32::INFINITY);
+            let tg = painter.layout(it.title.clone(), FontId::proportional(13.0), title_color, f32::INFINITY);
             let tw = tg.size().x.min(avail);
             let clip = Rect::from_min_max(pos2(x, bg.top()), pos2(x + avail, bg.bottom()));
             let painter = painter.with_clip_rect(clip);
             painter.galley(pos2(x, bg.center().y - tg.size().y / 2.0), tg, title_color);
             if !it.subtitle.is_empty() && tw + 30.0 < avail {
-                let sg = painter.layout_no_wrap(it.subtitle.lines().next().unwrap_or("").to_string(), FontId::monospace(11.5), p.muted);
+                let sg = painter.layout_no_wrap(it.subtitle.lines().next().unwrap_or("").to_string(), FontId::proportional(11.5), p.muted);
                 painter.galley(pos2(x + tw + 10.0, bg.center().y - sg.size().y / 2.0), sg, p.muted);
             }
         }

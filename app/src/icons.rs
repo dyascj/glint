@@ -25,7 +25,8 @@ impl Icons {
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             for img in jobs {
-                let rgba = macos::render(&img, PX);
+                // Long-lived thread: drain AppKit's autoreleased images every render.
+                let rgba = objc2::rc::autoreleasepool(|_| macos::render(&img, PX));
                 if done.send((img, rgba)).is_err() {
                     break;
                 }

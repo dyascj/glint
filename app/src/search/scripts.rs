@@ -6,7 +6,7 @@
 //! #!/bin/bash
 //! # @glint.title Say Hello
 //! # @glint.mode fullOutput        (silent | compact | fullOutput | inline | list)
-//! # @glint.icon 👋
+//! # @glint.icon hand.wave          (an SF Symbol name, or an image path)
 //! # @glint.description Prints a greeting
 //! # @glint.argument1 { "type": "text", "placeholder": "Name" }
 //! echo "Hello $1"
@@ -14,7 +14,7 @@
 //!
 //! `list` mode is Glint's own: the script gets the search text as `$1` and
 //! prints JSON items, which Glint shows as a searchable list:
-//! `[{"title": "...", "subtitle": "...", "icon": "🔥", "accessory": "...",
+//! `[{"title": "...", "subtitle": "...", "icon": "flame", "accessory": "...",
 //!    "copy": "...", "open": "https://...", "paste": "..."}]`
 
 use std::io::Read;
@@ -291,15 +291,15 @@ pub fn template(title: &str, mode: &str) -> String {
 query="$1"
 cat <<EOF
 [
-  { "title": "Hello, ${query:-world}", "subtitle": "Press enter to copy", "icon": "✨", "copy": "Hello, ${query:-world}" },
-  { "title": "Open the Glint repo", "subtitle": "github.com/dyascj/glint", "icon": "🔗", "open": "https://github.com/dyascj/glint" }
+  { "title": "Hello, ${query:-world}", "subtitle": "Press Return to copy", "icon": "sparkles", "copy": "Hello, ${query:-world}" },
+  { "title": "Open the Glint repo", "subtitle": "github.com/dyascj/glint", "icon": "link", "open": "https://github.com/dyascj/glint" }
 ]
 EOF"#
             .to_string(),
         _ => "echo \"Hello from your new Glint extension\"".to_string(),
     };
     format!(
-        "#!/bin/bash\n\n# Required parameters:\n# @glint.title {title}\n# @glint.mode {mode}\n\n# Optional parameters:\n# @glint.icon ✨\n# @glint.description What this extension does\n# @glint.packageName My Extensions\n\n{body}\n"
+        "#!/bin/bash\n\n# Required parameters:\n# @glint.title {title}\n# @glint.mode {mode}\n\n# Optional parameters:\n# @glint.icon sparkles\n# @glint.description What this extension does\n# @glint.packageName My Extensions\n\n{body}\n"
     )
 }
 
@@ -311,7 +311,7 @@ const SAMPLES: [(&str, &str); 4] = [
 
 # @glint.title Say Hello
 # @glint.mode fullOutput
-# @glint.icon 👋
+# @glint.icon hand.wave
 # @glint.packageName Glint Samples
 # @glint.description Greets you by name
 # @glint.argument1 { "type": "text", "placeholder": "Your name" }
@@ -328,7 +328,7 @@ echo "$0"
 
 // @glint.title Recent Downloads
 // @glint.mode list
-// @glint.icon 📥
+// @glint.icon arrow.down.circle
 // @glint.packageName Glint Samples
 // @glint.description Your newest downloads, searchable
 
@@ -346,7 +346,7 @@ function run(argv) {
     })
     .sort((a, b) => b.t - a.t)
     .slice(0, 40)
-    .map(({ n }) => ({ title: n, subtitle: '~/Downloads', icon: '📄', open: 'file://' + encodeURI(dir + '/' + n), copy: dir + '/' + n }))
+    .map(({ n }) => ({ title: n, subtitle: '~/Downloads', icon: 'doc', open: 'file://' + encodeURI(dir + '/' + n), copy: dir + '/' + n }))
   return JSON.stringify(items)
 }
 "#,
@@ -357,7 +357,7 @@ function run(argv) {
 
 # @glint.title Copy Today's Date
 # @glint.mode compact
-# @glint.icon 📅
+# @glint.icon calendar
 # @glint.packageName Glint Samples
 # @glint.keywords today, iso
 
@@ -372,7 +372,7 @@ echo "Copied $today"
 
 # @glint.title Toggle Wi-Fi
 # @glint.mode compact
-# @glint.icon 📶
+# @glint.icon wifi
 # @glint.packageName Glint Samples
 # @glint.keywords wireless, network
 

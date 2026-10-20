@@ -54,6 +54,7 @@ pub struct SettingsApp {
     login: LoginStatus,
     login_err: Option<String>,
     next_poll: f64,
+    next_settings_poll: f64,
     hotkey_error: Option<String>,
     ax: bool,
     spotlight_on: bool,
@@ -67,14 +68,11 @@ pub struct SettingsApp {
 fn entries() -> Vec<Entry> {
     let mut v: Vec<Entry> = commands::ALL.iter().map(|d| Entry { id: d.id(), title: d.title.into(), kind: "Command", icon: Img::Symbol(d.symbol) }).collect();
     for s in scripts::scan() {
-        let icon = match &s.icon {
-            Some(i) if !i.is_ascii() => Img::Emoji(i.clone()),
-            _ => Img::Symbol("terminal"),
-        };
+        let icon = macos::icon_named(s.icon.as_deref(), "terminal");
         v.push(Entry { id: s.id(), title: s.title.clone(), kind: "Extension", icon });
     }
     for q in data::load_quicklinks() {
-        let icon = if q.icon.is_empty() { Img::Symbol("link") } else { Img::Emoji(q.icon.clone()) };
+        let icon = macos::icon_named(Some(&q.icon), "link");
         v.push(Entry { id: q.id(), title: q.name.clone(), kind: "Quicklink", icon });
     }
     for a in apps::scan() {
@@ -94,6 +92,7 @@ impl SettingsApp {
             login: login::status(),
             login_err: None,
             next_poll: 0.0,
+            next_settings_poll: 0.0,
             hotkey_error: None,
             ax: macos::ax_trusted(),
             spotlight_on: macos::spotlight_shortcut_on(),
@@ -160,10 +159,21 @@ impl eframe::App for SettingsApp {
         });
 
         if self.s != self.saved && ctx.dragged_id().is_none() {
-            if let Err(e) = self.s.save() {
-                eprintln!("{APP_NAME}: couldn't save settings: {e}");
+            match self.s.save_over(&self.saved) {
+                Ok(m) => {
+                    self.s = m.clone();
+                    self.saved = m;
+                }
+                Err(e) => eprintln!("{APP_NAME}: couldn't save settings: {e}"),
             }
-            self.saved = self.s.clone();
+        } else if self.s == self.saved && now >= self.next_settings_poll {
+            // Pick up changes made in the other window.
+            self.next_settings_poll = now + 1.0;
+            let disk = Settings::load();
+            if disk != self.saved {
+                self.s = disk.clone();
+                self.saved = disk;
+            }
         }
     }
 }
@@ -379,7 +389,7 @@ impl SettingsApp {
                             let mut alias = self.s.aliases.get(&id).cloned().unwrap_or_default();
                             let resp = ui.add_sized(
                                 vec2(84.0, 26.0),
-                                TextEdit::singleline(&mut alias).font(egui::FontId::monospace(12.0)).margin(Margin::symmetric(8, 4)).hint_text(theme::text("alias", 12.0, theme::REGULAR).color(p.faint)),
+                                TextEdit::singleline(&mut alias).font(egui::FontId::proportional(12.5)).margin(Margin::symmetric(8, 4)).hint_text(theme::text("alias", 12.0, theme::REGULAR).color(p.faint)),
                             );
                             if resp.changed() {
                                 let a = alias.trim().to_lowercase();

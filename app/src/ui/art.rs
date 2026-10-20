@@ -82,7 +82,7 @@ pub fn launcher_mock(painter: &Painter, rect: Rect, p: &Pal, t: f64, only: Optio
     painter.rect_filled(rect, 12, Color32::from_white_alpha(0x07));
     painter.rect_stroke(rect, 12, Stroke::new(1.0, p.line), StrokeKind::Inside);
     let bar_h = 40.0;
-    let mono = |s: f32| FontId::new(s, FontFamily::Monospace);
+    let mono = |s: f32| FontId::new(s, FontFamily::Proportional);
     // search bar
     let q: String = scene.query.chars().take(typed).collect();
     let text_pos = pos2(rect.left() + 16.0, rect.top() + bar_h / 2.0);

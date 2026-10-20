@@ -28,8 +28,35 @@ pub enum Img {
     File(PathBuf),
     /// An SF Symbol, drawn white so it can be tinted.
     Symbol(&'static str),
-    /// An emoji in Apple Color Emoji.
+    /// An emoji in Apple Color Emoji (the emoji picker only; never as an icon).
     Emoji(String),
+}
+
+/// The icon a script, quicklink or list item asked for: an image path, or an
+/// SF Symbol name. Anything else (emoji included) gets `fallback`.
+pub fn icon_named(name: Option<&str>, fallback: &'static str) -> Img {
+    match name.map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) if n.starts_with('/') || n.starts_with('~') => {
+            Img::File(PathBuf::from(n.replacen('~', &crate::paths::home().display().to_string(), 1)))
+        }
+        Some(n) if n.chars().all(|c| c.is_ascii_alphanumeric() || c == '.') => Img::Symbol(intern(n)),
+        _ => Img::Symbol(fallback),
+    }
+}
+
+/// SF Symbol names live for the process; each distinct one is stored once.
+fn intern(name: &str) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    static NAMES: Mutex<Option<HashSet<&'static str>>> = Mutex::new(None);
+    let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+    let set = names.get_or_insert_with(HashSet::new);
+    if let Some(n) = set.get(name) {
+        return n;
+    }
+    let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+    set.insert(leaked);
+    leaked
 }
 
 /// Renders `img` to `px`×`px` premultiplied RGBA. Safe off the main thread.
@@ -59,7 +86,9 @@ pub fn render(img: &Img, px: usize) -> Option<Vec<u8>> {
                 image.drawInRect_fromRect_operation_fraction(rect, NSRect::ZERO, NSCompositingOperation::SourceOver, 1.0);
             }
             Img::Symbol(name) => {
-                let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None)?;
+                // Unknown names (typos in an extension) get a neutral glyph.
+                let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None)
+                    .or_else(|| NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str("app.dashed"), None))?;
                 // Fit the symbol's aspect inside the square, then paint it white.
                 let s = image.size();
                 let scale = (px as f64 * 0.86) / s.width.max(s.height).max(1.0);

@@ -125,7 +125,9 @@ pub enum Run {
     SubmitForm,
     SubmitArgs,
     /// Re-runs a full-output extension in place.
-    Rerun(usize, Vec<String>),
+    Rerun(PathBuf, Vec<String>),
+    /// Copies a file itself and pastes it into the front app.
+    PasteFile(PathBuf),
 }
 
 #[derive(Clone, Debug)]
@@ -280,12 +282,8 @@ pub fn command_item(def: &commands::Def) -> Item {
     Item::new(id, def.title, Icon::Img(Img::Symbol(def.symbol)), actions).sub(def.subtitle).acc("Command")
 }
 
-fn emoji_icon(icon: &Option<String>, fallback: &'static str) -> Icon {
-    match icon {
-        Some(i) if i.starts_with('/') || i.starts_with('~') => Icon::Img(Img::File(PathBuf::from(i.replacen('~', &paths::home().display().to_string(), 1)))),
-        Some(i) if i.chars().count() <= 4 && !i.is_ascii() => Icon::Img(Img::Emoji(i.clone())),
-        _ => Icon::Img(Img::Symbol(fallback)),
-    }
+fn named_icon(icon: Option<&str>, fallback: &'static str) -> Icon {
+    Icon::Img(crate::macos::icon_named(icon, fallback))
 }
 
 pub fn script_item(i: usize, s: &Script, inline: &HashMap<PathBuf, String>) -> Item {
@@ -304,7 +302,7 @@ pub fn script_item(i: usize, s: &Script, inline: &HashMap<PathBuf, String>) -> I
     } else {
         s.package.clone().or_else(|| s.description.clone()).unwrap_or_default()
     };
-    Item::new(id, &s.title, emoji_icon(&s.icon, "terminal"), actions).sub(sub).acc("Extension")
+    Item::new(id, &s.title, named_icon(s.icon.as_deref(), "terminal"), actions).sub(sub).acc("Extension")
 }
 
 pub fn quicklink_item(i: usize, q: &Quicklink, query: Option<&str>) -> Item {
@@ -316,7 +314,7 @@ pub fn quicklink_item(i: usize, q: &Quicklink, query: Option<&str>) -> Item {
         act("Delete Quicklink", "trash", Some(Shortcut::ctrl(Key::X)), Run::DeleteQuicklink(i)),
     ];
     actions.extend(ranking_actions(&id));
-    let icon = if q.icon.is_empty() { Icon::Img(Img::Symbol("link")) } else { Icon::Img(Img::Emoji(q.icon.clone())) };
+    let icon = named_icon(Some(&q.icon), "link");
     let host = match q.url.split_once("://") {
         Some(("http" | "https", rest)) => rest.split(['/', '?']).next().unwrap_or(rest).to_string(),
         Some((scheme, _)) => format!("{scheme}:"),
@@ -480,9 +478,15 @@ pub fn clipboard_view(clips: &[Clip], q: &str) -> Vec<Section> {
     let row = |(i, c): (usize, &Clip)| {
         let first = c.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
         let title: String = first.chars().take(120).collect();
+        // A copied file goes back on the clipboard as the file, not its path.
+        let (paste, copy) = if c.file {
+            (Run::PasteFile(PathBuf::from(&c.text)), Run::CopyFile(PathBuf::from(&c.text)))
+        } else {
+            (Run::Paste(c.text.clone()), Run::Copy(c.text.clone()))
+        };
         let mut actions = vec![
-            act("Paste to Active App", "doc.on.clipboard", None, Run::Paste(c.text.clone())),
-            act("Copy to Clipboard", "doc.on.doc", Some(Shortcut::cmd(Key::Enter)), Run::Copy(c.text.clone())),
+            act("Paste to Active App", "doc.on.clipboard", None, paste),
+            act("Copy to Clipboard", "doc.on.doc", Some(Shortcut::cmd(Key::Enter)), copy),
             act(if c.pinned { "Unpin" } else { "Pin" }, "pin", Some(Shortcut::cmd_shift(Key::P)), Run::PinClip(i)),
             act("Delete Entry", "trash", Some(Shortcut::ctrl(Key::X)), Run::DeleteClip(i)),
             act("Clear All History", "trash.slash", None, Run::Cmd(Cmd::ClearClipboardHistory)),
@@ -641,7 +645,13 @@ pub fn list_view(items: &[ListItem], q: &str) -> Vec<Section> {
             for (i, a) in actions.iter_mut().enumerate().skip(1) {
                 a.shortcut = [Some(Shortcut::cmd(Key::Enter)), Some(Shortcut::cmd_shift(Key::Enter))].get(i - 1).copied().flatten();
             }
-            let icon = if li.icon.is_empty() { Icon::Img(Img::Symbol("circle.fill")) } else { emoji_icon(&Some(li.icon.clone()), "circle.fill") };
+            let fallback = match (&li.open, &li.paste) {
+                (Some(u), _) if u.starts_with("file://") => "doc",
+                (Some(_), _) => "link",
+                (_, Some(_)) => "doc.on.clipboard",
+                _ => "text.alignleft",
+            };
+            let icon = named_icon(Some(&li.icon), fallback);
             Item::new("", &li.title, icon, actions).sub(&li.subtitle).acc(&li.accessory)
         })
         .collect();

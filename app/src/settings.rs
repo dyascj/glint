@@ -97,6 +97,27 @@ impl Settings {
     pub fn save(&self) -> std::io::Result<()> {
         prefs::save(FILE, self)
     }
+
+    /// Saves only the fields that changed since `base`, on top of what's on
+    /// disk now, so the Settings and Onboarding windows don't undo each other.
+    pub fn save_over(&self, base: &Settings) -> std::io::Result<Settings> {
+        let merged = merge(&Settings::load(), base, self);
+        merged.save()?;
+        Ok(merged)
+    }
+}
+
+fn merge(disk: &Settings, base: &Settings, edited: &Settings) -> Settings {
+    let to = |s: &Settings| serde_json::to_value(s).unwrap_or_default();
+    let (mut out, old, new) = (to(disk), to(base), to(edited));
+    if let (Some(o), Some(b), Some(n)) = (out.as_object_mut(), old.as_object(), new.as_object()) {
+        for (k, v) in n {
+            if b.get(k) != Some(v) {
+                o.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    serde_json::from_value(out).unwrap_or_else(|_| edited.clone())
 }
 
 /// "Cmd+Shift+K" -> "⌘ ⇧ K", for keycaps and menus.
@@ -191,6 +212,18 @@ mod tests {
         let parsed: global_hotkey::hotkey::HotKey = "Alt+Shift+KeyK".parse().unwrap();
         assert!(parsed.mods.contains(global_hotkey::hotkey::Modifiers::ALT));
         assert!(DEFAULT_HOTKEY.parse::<global_hotkey::hotkey::HotKey>().is_ok());
+    }
+
+    #[test]
+    fn saving_keeps_the_other_windows_changes() {
+        let base = Settings::default();
+        let mut disk = base.clone();
+        disk.hotkey = "Cmd+Space".into(); // changed in Settings
+        let mut mine = base.clone();
+        mine.files_in_root = false; // changed in Onboarding
+        let m = merge(&disk, &base, &mine);
+        assert_eq!(m.hotkey, "Cmd+Space");
+        assert!(!m.files_in_root);
     }
 
     #[test]

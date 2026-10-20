@@ -31,10 +31,10 @@ fn roots() -> Vec<PathBuf> {
 pub fn scan() -> Vec<App> {
     let mut out: Vec<App> = Vec::new();
     let mut push = |p: PathBuf| {
-        if let Some(name) = p.file_stem().and_then(|s| s.to_str()) {
-            if !out.iter().any(|a| a.name == name) {
-                out.push(App { name: name.to_string(), path: p.clone() });
-            }
+        if let Some(name) = p.file_stem().and_then(|s| s.to_str())
+            && !out.iter().any(|a| a.name == name)
+        {
+            out.push(App { name: name.to_string(), path: p.clone() });
         }
     };
     for root in roots() {
@@ -53,7 +53,7 @@ pub fn scan() -> Vec<App> {
         }
     }
     push(PathBuf::from("/System/Library/CoreServices/Finder.app"));
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out
 }
 
