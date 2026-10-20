@@ -10,6 +10,9 @@ use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{fs, thread};
 
+use dispatch2::DispatchQueue;
+use objc2::MainThreadMarker;
+
 use super::{Msg, send};
 use crate::paths::REPO_URL;
 use crate::prefs::Prefs;
@@ -75,13 +78,20 @@ pub fn start() {
 }
 
 /// Blocking check that publishes what it finds. `user` reports the outcome
-/// in the HUD when nothing new turns up.
+/// in an alert when nothing new turns up, like Slat.
 pub fn check_now(user: bool) {
-    match check() {
-        Ok(Some(r)) => send(Msg::UpdateFound(r)),
-        Ok(None) if user => send(Msg::Hud("You're on the latest version".into())),
-        Err(_) if user => send(Msg::Hud("Couldn't check for updates".into())),
-        _ => {}
+    let text = match check() {
+        Ok(Some(r)) => return send(Msg::UpdateFound(r)),
+        Ok(None) => "You're on the latest version.",
+        Err(_) => "Couldn't check for updates. Try again later.",
+    };
+    if user {
+        // On the main queue, outside eframe's frame: the modal loop keeps serving it.
+        DispatchQueue::main().exec_async(move || {
+            if let Some(mtm) = MainThreadMarker::new() {
+                super::window::alert(mtm, text);
+            }
+        });
     }
 }
 

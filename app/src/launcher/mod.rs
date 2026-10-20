@@ -365,6 +365,9 @@ impl Launcher {
         spawn_watchers();
         listen_for_signals();
         observe_activation();
+        if cfg!(debug_assertions) && std::env::var_os("GLINT_HUD_SNAPSHOT").is_some() {
+            self.hud("You're on the latest version");
+        }
         if snapshotting() {
             // Dev snapshots: open straight onto a query or command (GLINT_QUERY, GLINT_VIEW).
             self.show(ctx.input(|i| i.time));
@@ -934,7 +937,6 @@ tell application "System Events" to tell appearance preferences to get dark mode
                     self.install_update();
                 } else {
                     updates::check_in_background();
-                    hud("Checking for updates…");
                 }
             }
             Cmd::About => {
@@ -1559,7 +1561,8 @@ fn observe_activation() {
     use objc2_foundation::{NSNotification, NSNotificationCenter};
     let block = block2::RcBlock::new(|_: std::ptr::NonNull<NSNotification>| {
         let shown = MainThreadMarker::new().is_some_and(window::is_shown);
-        if !shown {
+        // An alert activating Glint isn't someone opening it.
+        if !shown && !window::modal() {
             send(Msg::Activated);
         }
     });

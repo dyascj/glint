@@ -7,20 +7,19 @@ use std::time::Duration;
 
 use dispatch2::{DispatchQueue, DispatchTime};
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
-use objc2::{MainThreadMarker, MainThreadOnly, msg_send};
+use objc2::{MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSApplication, NSBackingStoreType, NSColor, NSEvent, NSFloatingWindowLevel, NSFont, NSFontWeightMedium, NSPanel, NSScreen,
-    NSStatusWindowLevel, NSTextField, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
-    NSVisualEffectView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSApplication, NSBackingStoreType, NSBox, NSBoxType, NSColor, NSEvent, NSFloatingWindowLevel, NSFont, NSFontWeightMedium, NSPanel,
+    NSScreen, NSStatusWindowLevel, NSTextField, NSTitlePosition, NSView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
 };
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 
 pub const SIZE: [f32; 2] = [750.0, 474.0];
 
 fn window(mtm: MainThreadMarker) -> Option<Retained<NSWindow>> {
-    // Our only egui window; HUD panels are excluded by their level.
-    NSApplication::sharedApplication(mtm).windows().iter().find(|w| w.level() != NSStatusWindowLevel)
+    // The egui window carries the app's name; the HUD and alerts don't.
+    let name = NSString::from_str(crate::paths::APP_NAME);
+    NSApplication::sharedApplication(mtm).windows().iter().find(|w| w.title() == name)
 }
 
 /// Glass, floating level, every Space and over full-screen apps.
@@ -106,6 +105,32 @@ pub fn hide(mtm: MainThreadMarker) {
     NSApplication::sharedApplication(mtm).hide(None);
 }
 
+// ---- alerts ----
+
+static MODAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// True while an alert is up.
+pub fn modal() -> bool {
+    MODAL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A standard alert, the same as Slat's update messages. Focus goes back
+/// to the app you were in afterwards unless the launcher is open.
+pub fn alert(mtm: MainThreadMarker, text: &str) {
+    use std::sync::atomic::Ordering;
+    MODAL.store(true, Ordering::Relaxed);
+    let app = NSApplication::sharedApplication(mtm);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    let a = objc2_app_kit::NSAlert::new(mtm);
+    a.setMessageText(&NSString::from_str(text));
+    a.runModal();
+    MODAL.store(false, Ordering::Relaxed);
+    if !window(mtm).is_some_and(|w| w.isVisible() && w.alphaValue() > 0.0) {
+        app.hide(None);
+    }
+}
+
 // ---- HUD ----
 
 thread_local! {
@@ -113,7 +138,9 @@ thread_local! {
     static HUD_GEN: RefCell<u64> = const { RefCell::new(0) };
 }
 
-/// A dark pill at the bottom of the screen that fades after a moment.
+/// A dark pill at the bottom of the screen that goes away after a moment.
+/// Drawn with an NSBox (fill, hairline, corner radius) so it renders the same
+/// everywhere, with no material or layer tricks.
 pub fn hud(mtm: MainThreadMarker, text: &str) {
     let (panel, label) = HUD.with(|h| {
         h.borrow_mut()
@@ -133,24 +160,20 @@ pub fn hud(mtm: MainThreadMarker, text: &str) {
                 // SAFETY: the panel is ours and lives for the process.
                 unsafe { panel.setReleasedWhenClosed(false) };
                 panel.setCollectionBehavior(NSWindowCollectionBehavior::CanJoinAllSpaces | NSWindowCollectionBehavior::FullScreenAuxiliary);
-                let fx = NSVisualEffectView::new(mtm);
-                fx.setMaterial(NSVisualEffectMaterial::HUDWindow);
-                fx.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-                fx.setState(NSVisualEffectState::Active);
-                fx.setWantsLayer(true);
-                // SAFETY: a layer-backed view's layer accepts these CALayer setters.
-                unsafe {
-                    let layer: *mut AnyObject = msg_send![&*fx, layer];
-                    if !layer.is_null() {
-                        let _: () = msg_send![layer, setCornerRadius: 20.0f64];
-                        let _: () = msg_send![layer, setMasksToBounds: true];
-                    }
-                }
+                let pill = NSBox::new(mtm);
+                pill.setBoxType(NSBoxType::Custom);
+                pill.setTitlePosition(NSTitlePosition::NoTitle);
+                pill.setContentViewMargins(NSSize::new(0.0, 0.0));
+                pill.setFillColor(&NSColor::colorWithWhite_alpha(0.09, 0.94));
+                pill.setBorderColor(&NSColor::colorWithWhite_alpha(1.0, 0.14));
+                pill.setBorderWidth(1.0);
+                pill.setCornerRadius(20.0);
                 let label = NSTextField::labelWithString(&NSString::from_str(""), mtm);
-                label.setFont(Some(&NSFont::monospacedSystemFontOfSize_weight(13.0, unsafe { NSFontWeightMedium })));
-                label.setTextColor(Some(&NSColor::whiteColor()));
-                fx.addSubview(&label);
-                panel.setContentView(Some(&fx as &NSView));
+                // SAFETY: AppKit's font weight constant.
+                label.setFont(Some(&NSFont::systemFontOfSize_weight(13.0, unsafe { NSFontWeightMedium })));
+                label.setTextColor(Some(&NSColor::colorWithWhite_alpha(1.0, 0.92)));
+                pill.addSubview(&label);
+                panel.setContentView(Some(&pill as &NSView));
                 (panel, label)
             })
             .clone()
@@ -158,20 +181,34 @@ pub fn hud(mtm: MainThreadMarker, text: &str) {
     label.setStringValue(&NSString::from_str(text));
     label.sizeToFit();
     let ls = label.frame().size;
-    let (w, h) = (ls.width + 44.0, 40.0);
+    let (w, h) = ((ls.width + 44.0).ceil(), 40.0);
     label.setFrameOrigin(NSPoint::new(22.0, ((h - ls.height) / 2.0).round()));
     if let Some(screen) = active_screen(mtm) {
         let v = screen.visibleFrame();
         let origin = NSPoint::new((v.origin.x + (v.size.width - w) / 2.0).round(), v.origin.y + 110.0);
         panel.setFrame_display(NSRect::new(origin, NSSize::new(w, h)), true);
     }
-    panel.setAlphaValue(1.0);
     panel.orderFrontRegardless();
+    #[cfg(debug_assertions)]
+    if let Ok(path) = std::env::var("GLINT_HUD_SNAPSHOT")
+        && let Some(view) = panel.contentView()
+    {
+        // Dev only: render the pill to a PNG (no Screen Recording needed).
+        let b = view.bounds();
+        if let Some(rep) = view.bitmapImageRepForCachingDisplayInRect(b) {
+            view.cacheDisplayInRect_toBitmapImageRep(b, &rep);
+            // SAFETY: an empty properties dictionary is valid for PNG output.
+            let png = unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) };
+            if let Some(png) = png {
+                let _ = std::fs::write(path, png.to_vec());
+            }
+        }
+    }
     let stamp = HUD_GEN.with(|g| {
         *g.borrow_mut() += 1;
         *g.borrow()
     });
-    let when = DispatchTime::try_from(Duration::from_millis(1400)).unwrap_or(DispatchTime::NOW);
+    let when = DispatchTime::try_from(Duration::from_millis(1500)).unwrap_or(DispatchTime::NOW);
     let _ = DispatchQueue::main().after(when, move || {
         if HUD_GEN.with(|g| *g.borrow()) == stamp {
             HUD.with(|h| {

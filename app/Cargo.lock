@@ -1304,7 +1304,7 @@ dependencies = [
 
 [[package]]
 name = "glint"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "block2 0.6.2",
  "dispatch2",
