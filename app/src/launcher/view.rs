@@ -1026,7 +1026,7 @@ fn row(ui: &mut Ui, icons: &mut Icons, it: &Item, selected: bool, hotkey: Option
             painter.text(left.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, input, FontId::proportional(fit(input, half - 30.0, 17.0)), p.ink);
             painter.text(right.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, &answer.text, FontId::proportional(fit(&answer.text, half - 30.0, 24.0)), p.bright);
             painter.text(left.center_bottom() - vec2(0.0, 16.0), Align2::CENTER_CENTER, "Expression", FontId::proportional(10.5), p.dim);
-            painter.text(right.center_bottom() - vec2(0.0, 16.0), Align2::CENTER_CENTER, answer.unit.unwrap_or("Answer"), FontId::proportional(10.5), p.dim);
+            painter.text(right.center_bottom() - vec2(0.0, 16.0), Align2::CENTER_CENTER, answer.unit.as_deref().unwrap_or("Answer"), FontId::proportional(10.5), p.dim);
             painter.vline(card.center().x, (card.top() + 10.0)..=(card.bottom() - 10.0), Stroke::new(1.0, p.line));
             let ar = Rect::from_center_size(card.center(), vec2(24.0, 24.0));
             painter.rect_filled(ar, 12, p.elevated);
