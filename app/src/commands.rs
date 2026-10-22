@@ -6,6 +6,8 @@ pub enum Cmd {
     // Views
     SearchFiles,
     ClipboardHistory,
+    SearchMenuItems,
+    SwitchWindows,
     SearchEmoji,
     SavedColors,
     CalculatorHistory,
@@ -68,6 +70,8 @@ const fn c(cmd: Cmd, slug: &'static str, title: &'static str, subtitle: &'static
 pub const ALL: &[Def] = &[
     d(Cmd::SearchFiles, "search-files", "Search Files", "Files", "doc.text.magnifyingglass", &["find", "finder", "documents", "spotlight"]),
     d(Cmd::ClipboardHistory, "clipboard-history", "Clipboard History", "Clipboard", "doc.on.clipboard", &["copy", "paste", "pasteboard"]),
+    d(Cmd::SearchMenuItems, "search-menu-items", "Search Menu Items", "Menus", "filemenu.and.selection", &["menu bar", "commands", "actions", "menubar"]),
+    d(Cmd::SwitchWindows, "switch-windows", "Switch Windows", "Windows", "macwindow.on.rectangle", &["window switcher", "alt tab", "windows", "focus"]),
     d(Cmd::PickColor, "pick-color", "Pick Color", "Colors", "eyedropper", &["eyedropper", "color picker", "colour", "sample"]),
     d(Cmd::SavedColors, "saved-colors", "Saved Colors", "Colors", "swatchpalette", &["color history", "swatches", "palette", "colour"]),
     d(Cmd::SearchEmoji, "search-emoji", "Search Emoji & Symbols", "Emoji", "face.smiling", &["emoji", "symbols", "smiley"]),

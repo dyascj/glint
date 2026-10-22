@@ -10,6 +10,7 @@ use crate::commands::{self, Cmd};
 use crate::macos::{Img, Running};
 use crate::paths;
 use crate::search::apps::{self, App};
+use crate::search::ax::{Elem, MenuItem, Window};
 use crate::search::calc;
 use crate::search::color::{self, Rgb};
 use crate::search::data::{Clip, Frecency, Quicklink, Snippet};
@@ -128,6 +129,10 @@ pub enum Run {
     Rerun(PathBuf, Vec<String>),
     /// Copies a file itself and pastes it into the front app.
     PasteFile(PathBuf),
+    /// Clicks an item in the front app's menu bar.
+    PressMenu(Elem),
+    /// Brings a window (of the app with this pid) to the front.
+    RaiseWindow(i32, Elem),
 }
 
 #[derive(Clone, Debug)]
@@ -587,6 +592,62 @@ pub fn processes_view(running: &[Running], q: &str) -> Vec<Section> {
             .collect(),
     );
     vec![Section { title: "Running Applications".into(), items }]
+}
+
+/// The row that asks for Accessibility when a view can't work without it.
+fn needs_access(what: &str) -> Vec<Section> {
+    let actions = vec![act("Open Accessibility Settings", "lock.open", None, Run::OpenUrl(crate::macos::ACCESSIBILITY_URL.into()))];
+    let it = Item::new("", "Allow Accessibility Access", Icon::Img(Img::Symbol("hand.raised")), actions).sub(format!("Glint needs it to {what}"));
+    vec![Section { title: "Accessibility".into(), items: vec![it] }]
+}
+
+pub fn menus_view(menus: Option<&[MenuItem]>, error: Option<&str>, trusted: bool, q: &str) -> Vec<Section> {
+    if !trusted {
+        return needs_access("read the menus of the app you're using");
+    }
+    if error.is_some() {
+        return Vec::new();
+    }
+    let items = ranked(
+        menus
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|m| {
+                let parents = m.path.join(" › ");
+                let score = filter(q, &m.title, &[&parents])?;
+                let actions = vec![
+                    act("Run Menu Item", "filemenu.and.selection", None, Run::PressMenu(m.elem.clone())),
+                    act("Copy Name", "doc.on.doc", Some(Shortcut::cmd_shift(Key::C)), Run::Copy(m.title.clone())),
+                ];
+                Some((score, Item::new("", &m.title, Icon::Img(Img::Symbol("filemenu.and.selection")), actions).sub(parents).acc(&m.shortcut)))
+            })
+            .collect(),
+    );
+    vec![Section { title: "Menu Items".into(), items }]
+}
+
+pub fn windows_view(windows: Option<&[Window]>, trusted: bool, q: &str) -> Vec<Section> {
+    if !trusted {
+        return needs_access("see and switch between your windows");
+    }
+    let items = ranked(
+        windows
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|w| {
+                let score = filter(q, &w.title, &[&w.app])?;
+                let actions = vec![
+                    act("Switch to Window", "macwindow", None, Run::RaiseWindow(w.pid, w.elem.clone())),
+                    act("Quit Application", "xmark.app", Some(Shortcut::cmd_shift(Key::Q)), Run::QuitApp(w.pid, false)),
+                    act("Copy Title", "doc.on.doc", Some(Shortcut::cmd_shift(Key::C)), Run::Copy(w.title.clone())),
+                ];
+                let icon = w.app_path.clone().map_or(Icon::Img(Img::Symbol("macwindow")), |p| Icon::Img(Img::File(p)));
+                let sub = if w.minimized { format!("{} · Minimized", w.app) } else { w.app.clone() };
+                Some((score, Item::new("", &w.title, icon, actions).sub(sub)))
+            })
+            .collect(),
+    );
+    vec![Section { title: "Windows".into(), items }]
 }
 
 pub fn calculations_view(list: &[crate::search::data::Calculation], q: &str) -> Vec<Section> {
