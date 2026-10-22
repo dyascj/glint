@@ -7,8 +7,8 @@ pub struct Answer {
     pub text: String,
     /// What gets copied ("1234.5").
     pub raw: String,
-    /// "Centimetres" etc. for unit answers; None for plain numbers.
-    pub unit: Option<&'static str>,
+    /// "Centimetres", "Tokyo · Fri" etc.; None for plain numbers.
+    pub unit: Option<String>,
 }
 
 /// None unless the query is clearly a calculation (an operator, function or
@@ -19,6 +19,9 @@ pub fn evaluate(query: &str) -> Option<Answer> {
         return None;
     }
     if let Some(a) = convert(&q) {
+        return Some(a);
+    }
+    if let Some(a) = super::time::evaluate(&q) {
         return Some(a);
     }
     let tokens = lex(&q)?;
@@ -329,7 +332,7 @@ fn convert(q: &str) -> Option<Answer> {
         v * from.2 / to.2
     };
     let short = to.0[0];
-    Some(Answer { text: format!("{} {short}", pretty(out)), raw: plain(out), unit: Some(to.3) })
+    Some(Answer { text: format!("{} {short}", pretty(out)), raw: plain(out), unit: Some(to.3.to_string()) })
 }
 
 fn number(s: &str) -> Option<f64> {

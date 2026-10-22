@@ -8,3 +8,4 @@ pub mod data;
 pub mod files;
 pub mod fuzzy;
 pub mod scripts;
+pub mod time;

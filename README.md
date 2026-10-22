@@ -15,7 +15,7 @@ It's a Raycast alternative written in 100% Rust: one small native binary, no Ele
 <table>
 <tr>
 <td width="50%"><img src="assets/readme/root.png" alt="Root search with suggestions"><br><b>Search everything.</b> Apps, files, commands, settings panes, quicklinks and extensions, ranked by what you pick most.</td>
-<td width="50%"><img src="assets/readme/calc.png" alt="The calculator converting 24px to rem"><br><b>Calculate as you type.</b> Math, percentages and units, like <code>24px to rem</code>, <code>3 ft in cm</code> or <code>100 + 15%</code>.</td>
+<td width="50%"><img src="assets/readme/calc.png" alt="The calculator converting 24px to rem"><br><b>Calculate as you type.</b> Math, percentages, units and time zones, like <code>24px to rem</code>, <code>100 + 15%</code> or <code>3pm pst in london</code>.</td>
 </tr>
 <tr>
 <td><img src="assets/readme/color.png" alt="A hex color converted to RGB, HSL and OKLCH"><br><b>Convert colors.</b> Type <code>#hex</code>, <code>rgb()</code>, <code>hsl()</code> or <code>oklch()</code> and copy it in any format.</td>
@@ -36,7 +36,7 @@ It's a Raycast alternative written in 100% Rust: one small native binary, no Ele
 - **App launcher** with fuzzy matching (`vsc` finds Visual Studio Code) and learned ranking.
 - **Favorites** pinned to the top of the empty search, in your order (`⌘⇧F` on any app, command, extension or quicklink).
 - **File search** through Spotlight's own index, so there's nothing to build or keep fresh. Results show in root search and in Search Files, with a detail pane.
-- **Calculator** with percentages, functions and unit conversion across length, mass, temperature, data, time, volume and CSS units. Calculator History keeps your answers.
+- **Calculator** with percentages, functions and unit conversion across length, mass, temperature, data, time, volume and CSS units. It knows time zones too: `time in tokyo`, `london time`, `3pm pst in berlin`. Calculator History keeps your answers.
 - **Clipboard History** for text, images and files, with pinning, search and a preview pane. Screenshots and copied pictures paste back as images. Items copied by password managers are never saved.
 - **Colors:** Pick Color, Saved Colors, inline conversion and shade ramps you can copy as CSS variables or JSON.
 - **Emoji & Symbols** search.
