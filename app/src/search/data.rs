@@ -56,6 +56,23 @@ fn bonus(u: &Use, now: u64) -> i32 {
     ((u.count as f32).ln_1p() * 90.0 * recency).min(400.0) as i32
 }
 
+// ---- favorites ----
+
+/// Ids pinned to the top of root search, in your order.
+pub const FAVORITES: &str = "favorites.json";
+
+pub fn load_favorites() -> Vec<String> {
+    prefs::load(FAVORITES)
+}
+
+/// Moves `id` one place up (`by` < 0) or down, keeping it in the list.
+pub fn move_favorite(list: &mut [String], id: &str, by: isize) {
+    if let Some(i) = list.iter().position(|f| f == id) {
+        let j = (i as isize + by).clamp(0, list.len() as isize - 1) as usize;
+        list.swap(i, j);
+    }
+}
+
 // ---- quicklinks ----
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -259,6 +276,17 @@ mod tests {
         push_clip(&mut l, clip("a"), 2);
         assert_eq!(l[0].text, "a");
         assert!(l[0].pinned, "re-copying keeps the pin");
+    }
+
+    #[test]
+    fn favorites_move_within_bounds() {
+        let mut l: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
+        move_favorite(&mut l, "c", -1);
+        assert_eq!(l, ["a", "c", "b"]);
+        move_favorite(&mut l, "a", -1);
+        assert_eq!(l, ["a", "c", "b"], "the first stays first");
+        move_favorite(&mut l, "b", 1);
+        assert_eq!(l, ["a", "c", "b"], "the last stays last");
     }
 
     #[test]
