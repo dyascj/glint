@@ -62,6 +62,7 @@ pub enum Msg {
     ExtensionsChanged,
     DataChanged,
     Apps(Vec<App>),
+    Running(Vec<Running>),
 }
 
 static TX: OnceLock<Sender<Msg>> = OnceLock::new();
@@ -406,7 +407,8 @@ impl Launcher {
         }
         // Remember who had focus so "Hide others" and pasting go back to them.
         self.prev_app = macos::frontmost().filter(|(_, pid)| *pid != std::process::id() as i32);
-        // Every open starts fresh: root page, empty search.
+        // Every open starts fresh: root page, empty search, top row.
+        self.sections_key.0 = usize::MAX;
         self.stack.truncate(1);
         self.stack[0].query.clear();
         self.stack[0].selected = 0;
@@ -542,7 +544,13 @@ impl Launcher {
         self.sections = sections;
         self.sections_key = key;
         self.emoji = if matches!(self.page().view, View::Emoji) { self.emoji_sections() } else { Vec::new() };
-        let found = keep.and_then(|(id, title)| self.sections.iter().flat_map(|s| &s.items).position(|it| it.id == id && it.title == title));
+        // Only when that row is unambiguous: identical screenshots or
+        // "Untitled" windows keep the selection by position instead.
+        let found = keep.and_then(|(id, title)| {
+            let mut same = self.sections.iter().flat_map(|s| &s.items).enumerate().filter(|(_, it)| it.id == id && it.title == title);
+            let first = same.next().map(|(i, _)| i);
+            if same.next().is_some() { None } else { first }
+        });
         let n = self.sections.iter().map(|s| s.items.len()).sum::<usize>();
         // Grids (emoji, colors) have no sections; they clamp themselves.
         let grid = matches!(self.page().view, View::Emoji | View::Colors);
@@ -747,7 +755,17 @@ impl Launcher {
                 if macos::quit_app(pid, force) {
                     self.toast(format!("{} {name}", if force { "Force quit" } else { "Quit" }), true, now);
                     self.running.retain(|r| r.pid != pid);
+                    for p in &mut self.stack {
+                        if let View::Windows { items: Some(w), .. } = &mut p.view {
+                            w.retain(|w| w.pid != pid);
+                        }
+                    }
                     self.epoch += 1;
+                    // An app can refuse ("Save changes?"); check again shortly.
+                    std::thread::spawn(|| {
+                        std::thread::sleep(Duration::from_millis(600));
+                        send(Msg::Running(macos::running_apps()));
+                    });
                 }
             }
             Run::PinClip(i) => {
@@ -807,7 +825,9 @@ impl Launcher {
                 self.toast(if on { "Added to Favorites" } else { "Removed from Favorites" }, true, now);
             }
             Run::MoveFavorite(id, by) => {
-                data::move_favorite(&mut self.favorites, &id, by);
+                // Among the favorites on screen; uninstalled or disabled ones keep their place.
+                let shown: Vec<String> = self.sections.iter().filter(|s| s.title == "Favorites").flat_map(|s| s.items.iter().map(|i| i.id.clone())).collect();
+                data::move_favorite(&mut self.favorites, &id, by, |f| shown.iter().any(|s| s == f));
                 let _ = prefs::save(data::FAVORITES, &self.favorites);
                 self.epoch += 1;
             }
@@ -1461,7 +1481,9 @@ tell application "System Events" to tell appearance preferences to get dark mode
                     {
                         match &result {
                             Ok(v) => *items = Some(v.clone()),
-                            Err(e) => *error = Some(e.clone()),
+                            // Keep showing cached menus if a refresh fails.
+                            Err(e) if items.is_none() => *error = Some(e.clone()),
+                            Err(_) => {}
                         }
                     }
                 }
@@ -1508,6 +1530,10 @@ tell application "System Events" to tell appearance preferences to get dark mode
                     self.apps = found;
                     self.epoch += 1;
                 }
+            }
+            Msg::Running(r) => {
+                self.running = r;
+                self.epoch += 1;
             }
             Msg::SettingsChanged => self.settings_changed(),
             Msg::ExtensionsChanged => self.reload_scripts(),

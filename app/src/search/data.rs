@@ -65,11 +65,16 @@ pub fn load_favorites() -> Vec<String> {
     prefs::load(FAVORITES)
 }
 
-/// Moves `id` one place up (`by` < 0) or down, keeping it in the list.
-pub fn move_favorite(list: &mut [String], id: &str, by: isize) {
-    if let Some(i) = list.iter().position(|f| f == id) {
-        let j = (i as isize + by).clamp(0, list.len() as isize - 1) as usize;
-        list.swap(i, j);
+/// Swaps `id` with the nearest `shown` favorite above (`by` < 0) or below it.
+pub fn move_favorite(list: &mut [String], id: &str, by: isize, shown: impl Fn(&str) -> bool) {
+    let Some(i) = list.iter().position(|f| f == id) else { return };
+    let mut j = i as isize + by.signum();
+    while (0..list.len() as isize).contains(&j) {
+        if shown(&list[j as usize]) {
+            list.swap(i, j as usize);
+            return;
+        }
+        j += by.signum();
     }
 }
 
@@ -206,7 +211,9 @@ pub fn prune_clip_images(list: &[Clip]) {
     let keep: std::collections::HashSet<&str> = list.iter().filter(|c| c.image.is_some()).map(|c| c.text.as_str()).collect();
     for e in std::fs::read_dir(clip_images_dir()).into_iter().flatten().flatten() {
         let p = e.path();
-        if !keep.contains(p.to_string_lossy().as_ref()) {
+        // A just-saved image may not be in the list yet (its message is in flight).
+        let fresh = e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|a| a.as_secs() < 60));
+        if !fresh && !keep.contains(p.to_string_lossy().as_ref()) {
             let _ = std::fs::remove_file(p);
         }
     }
@@ -313,12 +320,15 @@ mod tests {
     #[test]
     fn favorites_move_within_bounds() {
         let mut l: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
-        move_favorite(&mut l, "c", -1);
+        let all = |_: &str| true;
+        move_favorite(&mut l, "c", -1, all);
         assert_eq!(l, ["a", "c", "b"]);
-        move_favorite(&mut l, "a", -1);
+        move_favorite(&mut l, "a", -1, all);
         assert_eq!(l, ["a", "c", "b"], "the first stays first");
-        move_favorite(&mut l, "b", 1);
+        move_favorite(&mut l, "b", 1, all);
         assert_eq!(l, ["a", "c", "b"], "the last stays last");
+        move_favorite(&mut l, "b", -1, |f| f != "c");
+        assert_eq!(l, ["b", "c", "a"], "hidden favorites are stepped over");
     }
 
     #[test]

@@ -170,7 +170,7 @@ fn read_image(pb: &NSPasteboard) -> Option<(Vec<u8>, [u32; 2])> {
     let (png, tiff) = unsafe { (NSPasteboardTypePNG, NSPasteboardTypeTIFF) };
     for ty in [png, tiff] {
         let Some(data) = pb.dataForType(ty) else { continue };
-        let rep = NSBitmapImageRep::imageRepWithData(&data)?;
+        let Some(rep) = NSBitmapImageRep::imageRepWithData(&data) else { continue };
         let size = [rep.pixelsWide() as u32, rep.pixelsHigh() as u32];
         let bytes = if ty == png {
             data.to_vec()
