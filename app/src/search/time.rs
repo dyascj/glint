@@ -73,7 +73,12 @@ pub fn evaluate(q: &str) -> Option<Answer> {
     let src = from.as_ref().map_or(&local, |(_, tz)| tz);
     let instant = match clock {
         Clock::Now => now(),
-        Clock::At(h, m) => at(now(), offset(src, now()), h, m),
+        Clock::At(h, m) => {
+            // Use the offset in force at that time, not now (DST change days).
+            let guess = at(now(), offset(src, now()), h, m);
+            let off = offset(src, guess);
+            at(now(), off, h, m)
+        }
     };
     Some(answer(instant, &name, &tz))
 }
