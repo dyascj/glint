@@ -1,6 +1,6 @@
 [package]
 name = "glint"
-version = "1.0.4"
+version = "1.1.0"
 edition = "2024"
 description = "A lightning fast launcher for macOS. Apps, files, colors and your own scripts, one keystroke away."
 license = "MIT"
