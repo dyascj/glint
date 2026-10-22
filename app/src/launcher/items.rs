@@ -568,8 +568,10 @@ pub fn clipboard_view(clips: &[Clip], q: &str) -> Vec<Section> {
     let q = q.trim().to_lowercase();
     let now = crate::search::data::now();
     let row = |(i, c): (usize, &Clip)| {
-        let first = c.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-        let title: String = first.chars().take(120).collect();
+        let title: String = match c.image {
+            Some([w, h]) => format!("Image ({w}×{h})"),
+            None => c.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().chars().take(120).collect(),
+        };
         // By index: a long clip isn't copied into every action, every frame.
         let mut actions = vec![
             act("Paste to Active App", "doc.on.clipboard", None, Run::PasteClip(i)),
@@ -578,7 +580,10 @@ pub fn clipboard_view(clips: &[Clip], q: &str) -> Vec<Section> {
             act("Delete Entry", "trash", Some(Shortcut::ctrl(Key::X)), Run::DeleteClip(i)),
             act("Clear All History", "trash.slash", None, Run::Cmd(Cmd::ClearClipboardHistory)),
         ];
-        let icon = if c.file {
+        let icon = if c.image.is_some() {
+            actions.insert(2, act("Open Image", "photo", Some(Shortcut::cmd(Key::O)), Run::OpenPath(PathBuf::from(&c.text))));
+            Icon::Img(Img::Thumb(PathBuf::from(&c.text)))
+        } else if c.file {
             actions.insert(2, act("Show in Finder", "folder", Some(Shortcut::cmd(Key::O)), Run::Reveal(PathBuf::from(&c.text))));
             Icon::Img(Img::File(PathBuf::from(&c.text)))
         } else if let Some(col) = (c.text.len() < 64).then(|| color::parse(&c.text)).flatten() {
@@ -592,18 +597,23 @@ pub fn clipboard_view(clips: &[Clip], q: &str) -> Vec<Section> {
         let mut it = Item::new("", title, icon, actions);
         it.accessory = if c.pinned { "Pinned".into() } else { String::new() };
         // The pane shows the first 4,000 characters; don't carry the rest around.
-        it.preview = Some(c.text.chars().take(4000).collect());
+        it.preview = c.image.is_none().then(|| c.text.chars().take(4000).collect());
         let mut d = vec![];
         if !c.app.is_empty() {
             d.push(("Application".to_string(), c.app.clone()));
         }
         d.push(("Copied".into(), ago_secs(now.saturating_sub(c.at))));
-        d.push(("Characters".into(), c.text.chars().count().to_string()));
-        d.push(("Words".into(), c.text.split_whitespace().count().to_string()));
+        if let Some([w, h]) = c.image {
+            d.push(("Dimensions".into(), format!("{w} × {h}")));
+        } else {
+            d.push(("Characters".into(), c.text.chars().count().to_string()));
+            d.push(("Words".into(), c.text.split_whitespace().count().to_string()));
+        }
         it.detail = d;
         it
     };
-    let matches = |c: &&Clip| q.is_empty() || c.text.to_lowercase().contains(&q);
+    // Images match on "image"; their text is only a file path.
+    let matches = |c: &&Clip| q.is_empty() || if c.image.is_some() { "image".contains(&q) || q.contains("image") } else { c.text.to_lowercase().contains(&q) };
     let pinned: Vec<Item> = clips.iter().enumerate().filter(|(_, c)| c.pinned).filter(|(_, c)| matches(c)).map(row).collect();
     let rest: Vec<Item> = clips.iter().enumerate().filter(|(_, c)| !c.pinned).filter(|(_, c)| matches(c)).map(row).collect();
     let mut s = Vec::new();

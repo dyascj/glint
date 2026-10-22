@@ -686,6 +686,21 @@ impl Launcher {
             Run::Paste(s) => self.paste(&s, now),
             Run::PasteClip(i) | Run::CopyClip(i) => {
                 let Some(c) = self.clips.get(i) else { return };
+                if c.image.is_some() {
+                    let ok = macos::copy_image(std::path::Path::new(&c.text));
+                    self.hide(now);
+                    if !ok {
+                        self.hud("That image is gone");
+                    } else if matches!(run, Run::PasteClip(_)) && self.settings.paste_on_select && macos::ax_trusted() {
+                        std::thread::spawn(|| {
+                            std::thread::sleep(Duration::from_millis(160));
+                            macos::paste();
+                        });
+                    } else {
+                        self.hud("Copied Image");
+                    }
+                    return;
+                }
                 // A copied file goes back on the clipboard as the file, not its path.
                 let next = match (c.file, matches!(run, Run::PasteClip(_))) {
                     (true, true) => Run::PasteFile(PathBuf::from(&c.text)),
@@ -746,6 +761,7 @@ impl Launcher {
                 if i < self.clips.len() {
                     self.clips.remove(i);
                     let _ = prefs::save(data::CLIPBOARD, &self.clips);
+                    data::prune_clip_images(&self.clips);
                     self.epoch += 1;
                 }
             }
@@ -930,6 +946,7 @@ impl Launcher {
             Cmd::ClearClipboardHistory => {
                 self.clips.retain(|c| c.pinned);
                 let _ = prefs::save(data::CLIPBOARD, &self.clips);
+                data::prune_clip_images(&self.clips);
                 self.epoch += 1;
                 self.toast("Clipboard history cleared", true, now);
             }
@@ -1393,6 +1410,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
                 if self.settings.clipboard_history {
                     data::push_clip(&mut self.clips, c, self.settings.clipboard_limit);
                     let _ = prefs::save(data::CLIPBOARD, &self.clips);
+                    data::prune_clip_images(&self.clips);
                     self.epoch += 1;
                 }
             }
@@ -1506,6 +1524,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
                 }
                 if prefs::changed_elsewhere(data::CLIPBOARD) {
                     self.clips = data::load_clips();
+                    data::prune_clip_images(&self.clips);
                 }
                 if prefs::changed_elsewhere(Frecency::FILE) {
                     self.frecency = Frecency::load();
@@ -1665,11 +1684,16 @@ fn spawn_watchers() {
                 if !CLIPBOARD_ON.load(Ordering::Relaxed) || macos::clipboard_concealed() {
                     return;
                 }
+                let app = || macos::frontmost().map(|(n, _)| n).unwrap_or_default();
                 if let Some((text, file)) = macos::read_clipboard()
                     && !text.trim().is_empty()
                 {
-                    let app = macos::frontmost().map(|(n, _)| n).unwrap_or_default();
-                    send(Msg::Clip(Clip { text, file, at: data::now(), pinned: false, app }));
+                    send(Msg::Clip(Clip { text, file, at: data::now(), pinned: false, app: app(), image: None }));
+                } else if let Some((png, size)) = macos::read_clipboard_image()
+                    && png.len() <= 25_000_000
+                    && let Some(path) = data::save_clip_image(&png)
+                {
+                    send(Msg::Clip(Clip { text: path, file: false, at: data::now(), pinned: false, app: app(), image: Some(size) }));
                 }
             });
         }

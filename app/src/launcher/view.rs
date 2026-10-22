@@ -552,7 +552,18 @@ impl Launcher {
         let Some(it) = self.selected_item().cloned() else { return };
         ui.scope_builder(UiBuilder::new().max_rect(right.shrink2(vec2(10.0, 6.0))), |ui| {
             ui.set_clip_rect(right);
-            if let Icon::Img(Img::File(path)) = &it.icon
+            if let Icon::Img(Img::Thumb(path)) = &it.icon {
+                // Images fill the pane, keeping room for the details below.
+                ui.add_space(8.0);
+                let side = ui.available_width().min((ui.available_height() - 150.0).max(80.0));
+                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), side), Sense::hover());
+                let r = Rect::from_center_size(r.center(), vec2(side, side));
+                // The small thumbnail stands in until the sharp one is ready.
+                if !self.icons.paint(ui.painter(), &Img::Preview(path.clone()), r, p.ink) {
+                    self.icons.paint(ui.painter(), &Img::Thumb(path.clone()), r, p.ink);
+                }
+                ui.add_space(10.0);
+            } else if let Icon::Img(Img::File(path)) = &it.icon
                 && it.preview.is_none()
             {
                 ui.add_space(14.0);

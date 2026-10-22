@@ -10,10 +10,19 @@ use crate::macos::{self, Img};
 
 /// Pixels per side: 32 pt icons at 2x look sharp at every size we draw.
 const PX: usize = 64;
+/// A sharp image in the preview pane at 2x.
+const PREVIEW_PX: usize = 800;
+/// Large previews kept around; older ones are dropped (about 2.5 MB each).
+const PREVIEWS: usize = 4;
+
+fn px(img: &Img) -> usize {
+    if matches!(img, Img::Preview(_)) { PREVIEW_PX } else { PX }
+}
 
 pub struct Icons {
     textures: HashMap<Img, TextureHandle>,
     requested: HashSet<Img>,
+    previews: std::collections::VecDeque<Img>,
     tx: Sender<Img>,
     rx: Receiver<(Img, Option<Vec<u8>>)>,
 }
@@ -26,7 +35,7 @@ impl Icons {
         std::thread::spawn(move || {
             for img in jobs {
                 // Long-lived thread: drain AppKit's autoreleased images every render.
-                let rgba = objc2::rc::autoreleasepool(|_| macos::render(&img, PX));
+                let rgba = objc2::rc::autoreleasepool(|_| macos::render(&img, px(&img)));
                 if done.send((img, rgba)).is_err() {
                     break;
                 }
@@ -34,14 +43,23 @@ impl Icons {
                 ctx.request_repaint_after(std::time::Duration::from_millis(16));
             }
         });
-        Icons { textures: HashMap::new(), requested: HashSet::new(), tx, rx }
+        Icons { textures: HashMap::new(), requested: HashSet::new(), previews: Default::default(), tx, rx }
     }
 
     /// Moves finished renders into textures; call once per frame.
     pub fn pump(&mut self, ctx: &egui::Context) {
         while let Ok((img, rgba)) = self.rx.try_recv() {
             if let Some(rgba) = rgba {
-                let image = ColorImage::from_rgba_premultiplied([PX, PX], &rgba);
+                let image = ColorImage::from_rgba_premultiplied([px(&img), px(&img)], &rgba);
+                if matches!(img, Img::Preview(_)) {
+                    self.previews.push_back(img.clone());
+                    if self.previews.len() > PREVIEWS
+                        && let Some(old) = self.previews.pop_front()
+                    {
+                        self.textures.remove(&old);
+                        self.requested.remove(&old);
+                    }
+                }
                 let name = format!("{img:?}");
                 self.textures.insert(img, ctx.load_texture(name, image, TextureOptions::LINEAR));
             }

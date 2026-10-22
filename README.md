@@ -37,7 +37,7 @@ It's a Raycast alternative written in 100% Rust: one small native binary, no Ele
 - **Favorites** pinned to the top of the empty search, in your order (`⌘⇧F` on any app, command, extension or quicklink).
 - **File search** through Spotlight's own index, so there's nothing to build or keep fresh. Results show in root search and in Search Files, with a detail pane.
 - **Calculator** with percentages, functions and unit conversion across length, mass, temperature, data, time, volume and CSS units. Calculator History keeps your answers.
-- **Clipboard History** for text and files, with pinning, search and a preview pane. Items copied by password managers are never saved.
+- **Clipboard History** for text, images and files, with pinning, search and a preview pane. Screenshots and copied pictures paste back as images. Items copied by password managers are never saved.
 - **Colors:** Pick Color, Saved Colors, inline conversion and shade ramps you can copy as CSS variables or JSON.
 - **Emoji & Symbols** search.
 - **Quicklinks** with `{query}` placeholders (Google, DuckDuckGo, GitHub, YouTube, Wikipedia, Maps and Define Word come built in) and **Snippets** with `{clipboard}`, `{date}` and `{time}`.
@@ -111,7 +111,7 @@ A `list` extension prints an array like this. Each item can `copy`, `open` (a UR
 
 ## Privacy
 
-Everything stays on your Mac. Glint has no account and no analytics, and the only request it makes on its own is the daily update check against GitHub. File search reads Spotlight's index; clipboard history, colors, snippets and quicklinks are plain JSON files in `~/Library/Application Support/Glint`.
+Everything stays on your Mac. Glint has no account and no analytics, and the only request it makes on its own is the daily update check against GitHub. File search reads Spotlight's index; clipboard history, colors, snippets and quicklinks are plain JSON files in `~/Library/Application Support/Glint`, and copied images are PNGs next to them, deleted when they leave the history.
 
 ## Build from source
 
