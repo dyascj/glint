@@ -178,6 +178,38 @@ pub struct Clip {
     /// Frontmost app when it was copied.
     #[serde(default)]
     pub app: String,
+    /// An image: `text` is the saved PNG's path, this its pixel size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<[u32; 2]>,
+}
+
+/// Where copied images are kept, named by content so a re-copy is one file.
+pub fn clip_images_dir() -> std::path::PathBuf {
+    crate::paths::support_dir().join("Clipboard Images")
+}
+
+/// Saves PNG bytes for clipboard history; returns the file's path.
+pub fn save_clip_image(png: &[u8]) -> Option<String> {
+    // FNV-1a: a stable name from the content, so identical copies dedupe.
+    let hash = png.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x100_0000_01b3));
+    let dir = clip_images_dir();
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(format!("{hash:016x}.png"));
+    if !path.exists() {
+        std::fs::write(&path, png).ok()?;
+    }
+    Some(path.to_string_lossy().into_owned())
+}
+
+/// Deletes saved images no entry points at any more.
+pub fn prune_clip_images(list: &[Clip]) {
+    let keep: std::collections::HashSet<&str> = list.iter().filter(|c| c.image.is_some()).map(|c| c.text.as_str()).collect();
+    for e in std::fs::read_dir(clip_images_dir()).into_iter().flatten().flatten() {
+        let p = e.path();
+        if !keep.contains(p.to_string_lossy().as_ref()) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
 }
 
 pub const CLIPBOARD: &str = "clipboard.json";
@@ -264,7 +296,7 @@ mod tests {
 
     #[test]
     fn clipboard_history_dedupes_and_keeps_pins() {
-        let clip = |s: &str| Clip { text: s.into(), file: false, at: 0, pinned: false, app: String::new() };
+        let clip = |s: &str| Clip { text: s.into(), file: false, at: 0, pinned: false, app: String::new(), image: None };
         let mut l = vec![];
         push_clip(&mut l, clip("a"), 2);
         l[0].pinned = true;

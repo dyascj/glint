@@ -12,10 +12,11 @@ use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};
 use objc2_app_kit::{
     NSApplicationActivationPolicy, NSBitmapImageRep, NSColor, NSColorSampler, NSColorSpace, NSCompositingOperation, NSDeviceRGBColorSpace,
-    NSFont, NSFontAttributeName, NSGraphicsContext, NSImage, NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardTypeString,
+    NSBitmapImageFileType, NSFont, NSFontAttributeName, NSGraphicsContext, NSImage, NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardTypePNG,
+    NSPasteboardTypeString, NSPasteboardTypeTIFF,
     NSRunningApplication, NSStringDrawing, NSWorkspace,
 };
-use objc2_foundation::{NSArray, NSDictionary, NSFileManager, NSPoint, NSRect, NSSize, NSString, NSURL};
+use objc2_foundation::{NSArray, NSData, NSDictionary, NSFileManager, NSPoint, NSRect, NSSize, NSString, NSURL};
 
 use crate::search::color::Rgb;
 
@@ -30,6 +31,15 @@ pub enum Img {
     Symbol(&'static str),
     /// An emoji in Apple Color Emoji (the emoji picker only; never as an icon).
     Emoji(String),
+    /// The picture inside an image file, fitted into the square.
+    Thumb(PathBuf),
+    /// The same, large, for the preview pane.
+    Preview(PathBuf),
+}
+
+/// Files `Img::Thumb` can draw: what NSImage reads.
+pub fn is_image(p: &Path) -> bool {
+    p.extension().is_some_and(|e| matches!(e.to_ascii_lowercase().to_str(), Some("png" | "jpg" | "jpeg" | "gif" | "tif" | "tiff" | "heic" | "icns" | "bmp" | "webp" | "pdf")))
 }
 
 /// The icon a script, quicklink or list item asked for: an image path, or an
@@ -37,7 +47,9 @@ pub enum Img {
 pub fn icon_named(name: Option<&str>, fallback: &'static str) -> Img {
     match name.map(str::trim).filter(|n| !n.is_empty()) {
         Some(n) if n.starts_with('/') || n.starts_with('~') => {
-            Img::File(PathBuf::from(n.replacen('~', &crate::paths::home().display().to_string(), 1)))
+            let p = PathBuf::from(n.replacen('~', &crate::paths::home().display().to_string(), 1));
+            // An image is the icon itself, not Finder's icon for an image file.
+            if is_image(&p) { Img::Thumb(p) } else { Img::File(p) }
         }
         Some(n) if n.chars().all(|c| c.is_ascii_alphanumeric() || c == '.') => Img::Symbol(intern(n)),
         _ => Img::Symbol(fallback),
@@ -98,6 +110,14 @@ pub fn render(img: &Img, px: usize) -> Option<Vec<u8>> {
                 NSColor::whiteColor().set();
                 objc2_app_kit::NSRectFillUsingOperation(rect, NSCompositingOperation::SourceIn);
             }
+            Img::Thumb(path) | Img::Preview(path) => {
+                let image = NSImage::initWithContentsOfFile(NSImage::alloc(), &NSString::from_str(&path.to_string_lossy()))?;
+                let s = image.size();
+                let scale = px as f64 / s.width.max(s.height).max(1.0);
+                let (w, h) = (s.width * scale, s.height * scale);
+                let r = NSRect::new(NSPoint::new((px as f64 - w) / 2.0, (px as f64 - h) / 2.0), NSSize::new(w, h));
+                image.drawInRect_fromRect_operation_fraction(r, NSRect::ZERO, NSCompositingOperation::SourceOver, 1.0);
+            }
             Img::Emoji(e) => {
                 let size = px as f64 * 0.8;
                 let font = NSFont::fontWithName_size(&NSString::from_str("Apple Color Emoji"), size).unwrap_or_else(|| NSFont::systemFontOfSize(size));
@@ -137,6 +157,48 @@ pub fn read_clipboard() -> Option<(String, bool)> {
         }
         pb.stringForType(NSPasteboardTypeString).map(|s| (s.to_string(), false))
     }
+}
+
+/// An image on the clipboard (screenshots, copied pictures) as PNG bytes and
+/// its pixel size. Only asked when there's no text or file.
+pub fn read_clipboard_image() -> Option<(Vec<u8>, [u32; 2])> {
+    read_image(&NSPasteboard::generalPasteboard())
+}
+
+fn read_image(pb: &NSPasteboard) -> Option<(Vec<u8>, [u32; 2])> {
+    // SAFETY: AppKit-provided pasteboard type constants.
+    let (png, tiff) = unsafe { (NSPasteboardTypePNG, NSPasteboardTypeTIFF) };
+    for ty in [png, tiff] {
+        let Some(data) = pb.dataForType(ty) else { continue };
+        let rep = NSBitmapImageRep::imageRepWithData(&data)?;
+        let size = [rep.pixelsWide() as u32, rep.pixelsHigh() as u32];
+        let bytes = if ty == png {
+            data.to_vec()
+        } else {
+            // SAFETY: an empty properties dictionary is valid for PNG output.
+            unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }?.to_vec()
+        };
+        return Some((bytes, size));
+    }
+    None
+}
+
+/// Puts an image file on the clipboard as PNG and TIFF (some apps only read TIFF).
+pub fn copy_image(path: &Path) -> bool {
+    write_image(&NSPasteboard::generalPasteboard(), path)
+}
+
+fn write_image(pb: &NSPasteboard, path: &Path) -> bool {
+    let Some(data) = NSData::dataWithContentsOfFile(&NSString::from_str(&path.to_string_lossy())) else { return false };
+    pb.clearContents();
+    // SAFETY: AppKit-provided pasteboard type constants.
+    unsafe {
+        pb.setData_forType(Some(&data), NSPasteboardTypePNG);
+        if let Some(tiff) = NSBitmapImageRep::imageRepWithData(&data).and_then(|r| r.TIFFRepresentation()) {
+            pb.setData_forType(Some(&tiff), NSPasteboardTypeTIFF);
+        }
+    }
+    true
 }
 
 /// Text copied by password managers is marked concealed; history skips it.
@@ -423,4 +485,39 @@ pub fn set_spotlight_shortcut(on: bool) -> bool {
     let ok = Command::new("/usr/bin/defaults").args(["write", SYMBOLIC, "AppleSymbolicHotKeys", "-dict-add", "64", &entry]).status().is_ok_and(|s| s.success());
     let _ = Command::new("/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings").arg("-u").status();
     ok
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn images_round_trip_through_a_pasteboard_and_render() {
+        // A private pasteboard: the test never touches your clipboard.
+        let pb = NSPasteboard::pasteboardWithUniqueName();
+        let dir = std::env::temp_dir().join(format!("glint-img-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("in.png");
+        // Render a symbol and save it as a 64x64 PNG to use as the copied image.
+        let rgba = render(&Img::Symbol("star.fill"), 64).expect("symbol renders");
+        let png = {
+            let rep = unsafe {
+                NSBitmapImageRep::initWithBitmapDataPlanes_pixelsWide_pixelsHigh_bitsPerSample_samplesPerPixel_hasAlpha_isPlanar_colorSpaceName_bytesPerRow_bitsPerPixel(
+                    NSBitmapImageRep::alloc(), std::ptr::null_mut(), 64, 64, 8, 4, true, false, NSDeviceRGBColorSpace, 256, 32,
+                )
+            }
+            .unwrap();
+            unsafe { std::ptr::copy_nonoverlapping(rgba.as_ptr(), rep.bitmapData(), rgba.len()) };
+            unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }.unwrap().to_vec()
+        };
+        std::fs::write(&src, &png).unwrap();
+        assert!(write_image(&pb, &src));
+        let (bytes, size) = read_image(&pb).expect("the image reads back");
+        assert_eq!(size, [64, 64]);
+        assert!(bytes.starts_with(b"\x89PNG"));
+        let thumb = render(&Img::Thumb(src.clone()), 32).expect("thumbnails render");
+        assert!(thumb.chunks(4).any(|px| px[3] > 0), "the thumbnail has visible pixels");
+        assert!(is_image(&src) && !is_image(Path::new("/Applications/Safari.app")));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
