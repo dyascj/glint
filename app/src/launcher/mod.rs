@@ -205,6 +205,7 @@ pub struct Launcher {
     pub colors: Vec<SavedColor>,
     pub calculations: Vec<Calculation>,
     pub frecency: Frecency,
+    pub favorites: Vec<String>,
     pub running: Vec<Running>,
     /// The last menus read, shown at once next time while they refresh.
     menu_cache: Option<(i32, Vec<MenuItem>)>,
@@ -311,6 +312,7 @@ impl Launcher {
             colors: data::load_colors(),
             calculations: Vec::new(),
             frecency: Frecency::load(),
+            favorites: data::load_favorites(),
             running: Vec::new(),
             menu_cache: None,
             files: FileSearch::new(move || notify_ctx.request_repaint()),
@@ -517,6 +519,7 @@ impl Launcher {
                     running: &self.running,
                     settings: &self.settings,
                     frecency: &self.frecency,
+                    favorites: &self.favorites,
                 },
             ),
             View::Files => items::files_view(&self.file_results),
@@ -777,6 +780,20 @@ impl Launcher {
                 let (date, time) = local_date_time();
                 let text = data::expand(&sn.text, &clip, &date, &time);
                 if paste { self.paste(&text, now) } else { self.run(Run::Copy(text), "", now) }
+            }
+            Run::Favorite(id, on) => {
+                self.favorites.retain(|f| *f != id);
+                if on {
+                    self.favorites.push(id);
+                }
+                let _ = prefs::save(data::FAVORITES, &self.favorites);
+                self.epoch += 1;
+                self.toast(if on { "Added to Favorites" } else { "Removed from Favorites" }, true, now);
+            }
+            Run::MoveFavorite(id, by) => {
+                data::move_favorite(&mut self.favorites, &id, by);
+                let _ = prefs::save(data::FAVORITES, &self.favorites);
+                self.epoch += 1;
             }
             Run::Forget(id) => {
                 self.frecency.forget(&id);

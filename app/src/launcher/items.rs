@@ -131,6 +131,10 @@ pub enum Run {
     PasteFile(PathBuf),
     /// Clipboard history entry by index: paste it, or copy it back.
     PasteClip(usize),
+    /// Adds (true) or removes a root item from Favorites.
+    Favorite(String, bool),
+    /// Moves a favorite up (-1) or down (1).
+    MoveFavorite(String, isize),
     CopyClip(usize),
     /// Clicks an item in the front app's menu bar.
     PressMenu(Elem),
@@ -189,6 +193,7 @@ pub struct Sources<'a> {
     pub running: &'a [Running],
     pub settings: &'a Settings,
     pub frecency: &'a Frecency,
+    pub favorites: &'a [String],
 }
 
 // ---- per-source items ----
@@ -431,6 +436,19 @@ impl Src {
     }
 
     fn item(self, s: &Sources) -> Item {
+        let mut it = self.row(s);
+        // Favorites go right after the main actions, before ranking tools.
+        let at = it.actions.len().saturating_sub(2).max(1);
+        let fav = if s.favorites.contains(&it.id) {
+            act("Remove from Favorites", "star.slash", Some(Shortcut::cmd_shift(Key::F)), Run::Favorite(it.id.clone(), false))
+        } else {
+            act("Add to Favorites", "star", Some(Shortcut::cmd_shift(Key::F)), Run::Favorite(it.id.clone(), true))
+        };
+        it.actions.insert(at, fav);
+        it
+    }
+
+    fn row(self, s: &Sources) -> Item {
         match self {
             Src::App(i) => app_item(&s.apps[i], s.running),
             Src::Cmd(i) => command_item(&commands::ALL[i]),
@@ -447,7 +465,22 @@ pub fn root(query: &str, s: &Sources) -> Vec<Section> {
 
     let mut sections = Vec::new();
     if q.is_empty() {
-        let mut used: Vec<(i32, Src)> = candidates.iter().filter_map(|(c, id)| {
+        let favorites: Vec<Item> = s
+            .favorites
+            .iter()
+            .filter_map(|f| candidates.iter().find(|(_, id)| id == f))
+            .map(|(c, _)| {
+                let mut it = c.item(s);
+                let at = it.actions.iter().position(|a| matches!(a.run, Run::Favorite(..))).map_or(it.actions.len(), |i| i + 1);
+                let moves = [
+                    act("Move Up in Favorites", "arrow.up", None, Run::MoveFavorite(it.id.clone(), -1)),
+                    act("Move Down in Favorites", "arrow.down", None, Run::MoveFavorite(it.id.clone(), 1)),
+                ];
+                it.actions.splice(at..at, moves);
+                it
+            })
+            .collect();
+        let mut used: Vec<(i32, Src)> = candidates.iter().filter(|(_, id)| !s.favorites.contains(id)).filter_map(|(c, id)| {
             let b = s.frecency.bonus(id);
             (b > 0).then_some((b, *c))
         }).collect();
@@ -455,15 +488,19 @@ pub fn root(query: &str, s: &Sources) -> Vec<Section> {
         let mut suggestions: Vec<Item> = used.into_iter().take(6).map(|(_, c)| c.item(s)).collect();
         for cmd in STARTERS {
             let id = commands::def(cmd).id();
-            if suggestions.len() < 6 && !suggestions.iter().any(|i| i.id == id) && !s.settings.disabled.contains(&id) {
-                suggestions.push(command_item(commands::def(cmd)));
+            if suggestions.len() < 6 && !suggestions.iter().any(|i| i.id == id) && !s.settings.disabled.contains(&id) && !s.favorites.contains(&id) {
+                suggestions.push(Src::Cmd(commands::ALL.iter().position(|d| d.cmd == cmd).unwrap_or(0)).item(s));
             }
+        }
+        let shown: Vec<String> = favorites.iter().chain(&suggestions).map(|it| it.id.clone()).collect();
+        if !favorites.is_empty() {
+            sections.push(Section { title: "Favorites".into(), items: favorites });
         }
         sections.push(Section { title: "Suggestions".into(), items: suggestions });
         let glint: Vec<Item> = [Cmd::Settings, Cmd::CreateExtension, Cmd::CreateQuicklink, Cmd::QuitApplications]
             .iter()
             .map(|c| command_item(commands::def(*c)))
-            .filter(|it| !sections[0].items.iter().any(|x| x.id == it.id))
+            .filter(|it| !shown.contains(&it.id))
             .collect();
         sections.push(Section { title: "Commands".into(), items: glint });
         return sections;
@@ -770,7 +807,7 @@ mod tests {
     use super::*;
 
     fn sources<'a>(apps: &'a [App], s: &'a Settings, f: &'a Frecency, inline: &'a HashMap<PathBuf, String>) -> Sources<'a> {
-        Sources { apps, scripts: &[], inline, quicklinks: &[], files: &[], running: &[], settings: s, frecency: f }
+        Sources { apps, scripts: &[], inline, quicklinks: &[], files: &[], running: &[], settings: s, frecency: f, favorites: &[] }
     }
 
     #[test]
@@ -798,5 +835,13 @@ mod tests {
         let empty = root("", &sources(&apps, &s, &f, &inline));
         assert_eq!(empty[0].title, "Suggestions");
         assert!(!empty[0].items.is_empty());
+        let favs = vec!["app:/Applications/Safari.app".to_string()];
+        let src = Sources { favorites: &favs, ..sources(&apps, &s, &f, &inline) };
+        let empty = root("", &src);
+        assert_eq!(empty[0].title, "Favorites");
+        assert_eq!(empty[0].items[0].title, "Safari");
+        assert!(empty[1].items.iter().all(|i| i.title != "Safari"), "a favorite isn't suggested twice");
+        let found = root("saf", &src);
+        assert!(found[0].items[0].actions.iter().any(|a| a.run == Run::Favorite(favs[0].clone(), false)), "searching offers Remove from Favorites");
     }
 }

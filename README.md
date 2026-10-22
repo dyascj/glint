@@ -34,6 +34,7 @@ It's a Raycast alternative written in 100% Rust: one small native binary, no Ele
 ## What's inside
 
 - **App launcher** with fuzzy matching (`vsc` finds Visual Studio Code) and learned ranking.
+- **Favorites** pinned to the top of the empty search, in your order (`⌘⇧F` on any app, command, extension or quicklink).
 - **File search** through Spotlight's own index, so there's nothing to build or keep fresh. Results show in root search and in Search Files, with a detail pane.
 - **Calculator** with percentages, functions and unit conversion across length, mass, temperature, data, time, volume and CSS units. Calculator History keeps your answers.
 - **Clipboard History** for text and files, with pinning, search and a preview pane. Items copied by password managers are never saved.
