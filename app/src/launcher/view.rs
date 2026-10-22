@@ -68,8 +68,10 @@ impl Launcher {
     pub fn emoji_sections(&self) -> Vec<(String, Vec<Emoji>)> {
         let q = self.page().query.trim().to_lowercase();
         if q.is_empty() {
-            let mut recent: Vec<(i32, Emoji)> = emojis::iter().filter_map(|e| {
-                let b = self.frecency.bonus(&format!("emoji:{}", e.as_str()));
+            // Walk what you've used, not all ~1,900 emoji.
+            let mut recent: Vec<(i32, Emoji)> = self.frecency.0.keys().filter_map(|k| {
+                let e = emojis::get(k.strip_prefix("emoji:")?)?;
+                let b = self.frecency.bonus(k);
                 (b > 0).then_some((b, e))
             }).collect();
             recent.sort_by(|a, b| b.0.cmp(&a.0));
@@ -93,7 +95,7 @@ impl Launcher {
     }
 
     fn selected_emoji(&self) -> Option<Emoji> {
-        self.emoji_sections().into_iter().flat_map(|(_, v)| v).nth(self.page().selected)
+        self.emoji.iter().flat_map(|(_, v)| v).nth(self.page().selected).copied()
     }
 
     /// Saved colors matching the query; index 0 is the Pick Color tile.
@@ -108,7 +110,7 @@ impl Launcher {
 
     fn grid_len(&self) -> usize {
         match self.page().view {
-            View::Emoji => self.emoji_sections().iter().map(|(_, v)| v.len()).sum(),
+            View::Emoji => self.emoji.iter().map(|(_, v)| v.len()).sum(),
             View::Colors => self.color_cells().len(),
             _ => self.item_count(),
         }
@@ -377,7 +379,8 @@ impl Launcher {
             let x = r.left() - 18.0 + (r.width() + 36.0 + w) * t - w;
             let seg = Rect::from_min_max(pos2(x.max(r.left() - 18.0), r.bottom() - 1.5), pos2((x + w).min(r.right() + 18.0), r.bottom() + 0.5));
             ui.painter().rect_filled(seg, 1, p.accent.gamma_multiply(0.8));
-            ui.ctx().request_repaint();
+            // 30 fps is plenty for a progress sweep; full rate redraws the blur too.
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
         }
         ui.horizontal_centered(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -469,7 +472,7 @@ impl Launcher {
         let r = ui.max_rect();
         let (title, sub) = match &self.page().view {
             View::Files if self.page().query.trim().chars().count() < 2 => ("Search your files", "Type at least two letters of a file or folder name."),
-            View::Files if self.file_loading => ("Searching…", ""),
+            View::Files if self.file_loading || self.file_due.is_some() => ("Searching…", ""),
             View::Clipboard => ("Nothing copied yet", "Copy something and it shows up here."),
             View::Snippets => ("No snippets yet", "Create one with Create Snippet."),
             View::List { .. } => ("No results", ""),
@@ -588,8 +591,9 @@ impl Launcher {
     }
 
     fn emoji_grid(&mut self, ui: &mut Ui) {
-        let sections = self.emoji_sections();
+        let sections = std::mem::take(&mut self.emoji);
         if sections.iter().all(|(_, v)| v.is_empty()) {
+            self.emoji = sections;
             return self.empty(ui);
         }
         let p = pal();
@@ -609,6 +613,14 @@ impl Launcher {
                 for chunk in list.chunks(EMOJI_COLS) {
                     let (row_r, _) = ui.allocate_exact_size(vec2(w, cell), Sense::hover());
                     let visible = ui.is_rect_visible(row_r);
+                    // Off-screen rows only need to reserve space (and scroll to the selection).
+                    if !visible {
+                        if scroll && (idx..idx + chunk.len()).contains(&selected) {
+                            ui.scroll_to_rect(row_r, None);
+                        }
+                        idx += chunk.len();
+                        continue;
+                    }
                     for (k, e) in chunk.iter().enumerate() {
                         let r = Rect::from_min_size(pos2(row_r.left() + k as f32 * cell, row_r.top()), vec2(cell, cell)).shrink(3.0);
                         let resp = ui.interact(r, ui.scope_id().with(("emoji", idx)), Sense::click());
@@ -620,12 +632,10 @@ impl Launcher {
                         } else if resp.hovered() {
                             ui.painter().rect_filled(r, 10, p.chip);
                         }
-                        if visible {
-                            let img = Img::Emoji(e.as_str().to_string());
-                            let er = Rect::from_center_size(r.center(), vec2(cell * 0.5, cell * 0.5));
-                            if !icons.paint(ui.painter(), &img, er, p.ink) {
-                                ui.painter().text(r.center(), Align2::CENTER_CENTER, e.as_str(), FontId::proportional(cell * 0.4), p.ink);
-                            }
+                        let img = Img::Emoji(e.as_str().to_string());
+                        let er = Rect::from_center_size(r.center(), vec2(cell * 0.5, cell * 0.5));
+                        if !icons.paint(ui.painter(), &img, er, p.ink) {
+                            ui.painter().text(r.center(), Align2::CENTER_CENTER, e.as_str(), FontId::proportional(cell * 0.4), p.ink);
                         }
                         if resp.clicked() {
                             clicked = Some(idx);
@@ -635,6 +645,7 @@ impl Launcher {
                 }
             }
         });
+        self.emoji = sections;
         if let Some(c) = clicked {
             self.page_mut().selected = c;
             let (id, acts) = self.current_actions();

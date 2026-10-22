@@ -30,7 +30,8 @@ impl Icons {
                 if done.send((img, rgba)).is_err() {
                     break;
                 }
-                ctx.request_repaint();
+                // A burst of renders (every app icon at launch) shares a few frames.
+                ctx.request_repaint_after(std::time::Duration::from_millis(16));
             }
         });
         Icons { textures: HashMap::new(), requested: HashSet::new(), tx, rx }

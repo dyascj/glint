@@ -311,24 +311,27 @@ pub fn quit_all() {
     }
 }
 
-fn open_with(args: &[&str]) -> bool {
-    Command::new("/usr/bin/open").args(args).status().is_ok_and(|s| s.success())
+/// Runs `open` on its own thread: it takes 50-300 ms, which the caller
+/// (often the UI) shouldn't wait for.
+pub fn open_with(args: &[&std::ffi::OsStr]) {
+    let args: Vec<std::ffi::OsString> = args.iter().map(|a| a.to_os_string()).collect();
+    std::thread::spawn(move || Command::new("/usr/bin/open").args(args).status());
 }
 
-pub fn open(target: &str) -> bool {
-    open_with(&[target])
+pub fn open(target: &str) {
+    open_with(&[target.as_ref()]);
 }
 
-pub fn open_path(p: &Path) -> bool {
-    open_with(&[&p.to_string_lossy()])
+pub fn open_path(p: &Path) {
+    open_with(&[p.as_os_str()]);
 }
 
-pub fn reveal(p: &Path) -> bool {
-    open_with(&["-R", &p.to_string_lossy()])
+pub fn reveal(p: &Path) {
+    open_with(&["-R".as_ref(), p.as_os_str()]);
 }
 
-pub fn open_in(app_name: &str, p: &Path) -> bool {
-    open_with(&["-a", app_name, &p.to_string_lossy()])
+pub fn open_in(app_name: &str, p: &Path) {
+    open_with(&["-a".as_ref(), app_name.as_ref(), p.as_os_str()]);
 }
 
 /// Quick Look preview panel.

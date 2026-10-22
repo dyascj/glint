@@ -129,6 +129,9 @@ pub enum Run {
     Rerun(PathBuf, Vec<String>),
     /// Copies a file itself and pastes it into the front app.
     PasteFile(PathBuf),
+    /// Clipboard history entry by index: paste it, or copy it back.
+    PasteClip(usize),
+    CopyClip(usize),
     /// Clicks an item in the front app's menu bar.
     PressMenu(Elem),
     /// Brings a window (of the app with this pid) to the front.
@@ -377,34 +380,79 @@ pub fn color_item(c: Rgb, primary: ColorFormat) -> Item {
 /// Commands shown before you type anything (after your most used).
 const STARTERS: [Cmd; 6] = [Cmd::SearchFiles, Cmd::ClipboardHistory, Cmd::PickColor, Cmd::SavedColors, Cmd::SearchEmoji, Cmd::Extensions];
 
+/// Something root search can show. Scoring only needs its id, title and
+/// keywords; the full row (actions, icon) is built for the winners alone.
+#[derive(Clone, Copy)]
+enum Src {
+    App(usize),
+    Cmd(usize),
+    Script(usize),
+    Quicklink(usize),
+    Pane(usize),
+}
+
+impl Src {
+    fn all(s: &Sources) -> impl Iterator<Item = Src> {
+        (0..s.apps.len())
+            .map(Src::App)
+            .chain((0..commands::ALL.len()).map(Src::Cmd))
+            .chain((0..s.scripts.len()).map(Src::Script))
+            .chain((0..s.quicklinks.len()).map(Src::Quicklink))
+            .chain((0..apps::SETTINGS_PANES.len()).map(Src::Pane))
+    }
+
+    fn id(self, s: &Sources) -> String {
+        match self {
+            Src::App(i) => format!("app:{}", s.apps[i].path.display()),
+            Src::Cmd(i) => commands::ALL[i].id(),
+            Src::Script(i) => s.scripts[i].id(),
+            Src::Quicklink(i) => s.quicklinks[i].id(),
+            Src::Pane(i) => format!("pane:{}", apps::SETTINGS_PANES[i].1),
+        }
+    }
+
+    fn title<'a>(self, s: &'a Sources) -> &'a str {
+        match self {
+            Src::App(i) => &s.apps[i].name,
+            Src::Cmd(i) => commands::ALL[i].title,
+            Src::Script(i) => &s.scripts[i].title,
+            Src::Quicklink(i) => &s.quicklinks[i].name,
+            Src::Pane(i) => apps::SETTINGS_PANES[i].0,
+        }
+    }
+
+    fn keywords<'a>(self, s: &'a Sources) -> Vec<&'a str> {
+        match self {
+            Src::Cmd(i) => commands::ALL[i].keywords.to_vec(),
+            Src::Script(i) => s.scripts[i].keywords.iter().map(String::as_str).collect(),
+            Src::Pane(i) => apps::SETTINGS_PANES[i].2.split(' ').collect(),
+            Src::App(_) | Src::Quicklink(_) => Vec::new(),
+        }
+    }
+
+    fn item(self, s: &Sources) -> Item {
+        match self {
+            Src::App(i) => app_item(&s.apps[i], s.running),
+            Src::Cmd(i) => command_item(&commands::ALL[i]),
+            Src::Script(i) => script_item(i, &s.scripts[i], s.inline),
+            Src::Quicklink(i) => quicklink_item(i, &s.quicklinks[i], None),
+            Src::Pane(i) => pane_item(apps::SETTINGS_PANES[i].0, apps::SETTINGS_PANES[i].1),
+        }
+    }
+}
+
 pub fn root(query: &str, s: &Sources) -> Vec<Section> {
     let q = query.trim().to_lowercase();
-    let mut candidates: Vec<(Item, Vec<String>)> = Vec::new();
-    for a in s.apps {
-        candidates.push((app_item(a, s.running), vec![]));
-    }
-    for d in commands::ALL {
-        candidates.push((command_item(d), d.keywords.iter().map(|k| k.to_string()).collect()));
-    }
-    for (i, sc) in s.scripts.iter().enumerate() {
-        candidates.push((script_item(i, sc, s.inline), sc.keywords.clone()));
-    }
-    for (i, ql) in s.quicklinks.iter().enumerate() {
-        candidates.push((quicklink_item(i, ql, None), vec![]));
-    }
-    for (title, id, kw) in apps::SETTINGS_PANES {
-        candidates.push((pane_item(title, id), kw.split(' ').map(String::from).collect()));
-    }
-    candidates.retain(|(it, _)| !s.settings.disabled.contains(&it.id));
+    let candidates: Vec<(Src, String)> = Src::all(s).map(|c| (c, c.id(s))).filter(|(_, id)| !s.settings.disabled.contains(id)).collect();
 
     let mut sections = Vec::new();
     if q.is_empty() {
-        let mut used: Vec<(i32, Item)> = candidates.iter().filter_map(|(it, _)| {
-            let b = s.frecency.bonus(&it.id);
-            (b > 0).then(|| (b, it.clone()))
+        let mut used: Vec<(i32, Src)> = candidates.iter().filter_map(|(c, id)| {
+            let b = s.frecency.bonus(id);
+            (b > 0).then_some((b, *c))
         }).collect();
         used.sort_by(|a, b| b.0.cmp(&a.0));
-        let mut suggestions: Vec<Item> = used.into_iter().take(6).map(|(_, it)| it).collect();
+        let mut suggestions: Vec<Item> = used.into_iter().take(6).map(|(_, c)| c.item(s)).collect();
         for cmd in STARTERS {
             let id = commands::def(cmd).id();
             if suggestions.len() < 6 && !suggestions.iter().any(|i| i.id == id) && !s.settings.disabled.contains(&id) {
@@ -430,21 +478,23 @@ pub fn root(query: &str, s: &Sources) -> Vec<Section> {
     }
 
     let aliases: HashMap<&str, &str> = s.settings.aliases.iter().map(|(id, a)| (id.as_str(), a.as_str())).collect();
-    let mut scored: Vec<(i32, Item)> = candidates
+    let mut scored: Vec<(i32, Src, Option<String>)> = candidates
         .into_iter()
-        .filter_map(|(mut it, kw)| {
-            let kws: Vec<&str> = kw.iter().map(String::as_str).collect();
-            let alias = aliases.get(it.id.as_str()).map(|a| a.to_lowercase());
+        .filter_map(|(c, id)| {
+            let alias = aliases.get(id.as_str()).map(|a| a.to_lowercase());
             let alias_score = alias.as_deref().and_then(|a| if a == q { Some(5000) } else if a.starts_with(&q) { Some(1100) } else { None });
-            let base = fuzzy::score(&q, &it.title, &kws).max(alias_score)?;
-            if let Some(a) = alias {
-                it.accessory = format!("{} · {a}", it.accessory);
-            }
-            Some((base + s.frecency.bonus(&it.id), it))
+            let base = fuzzy::score(&q, c.title(s), &c.keywords(s)).max(alias_score)?;
+            Some((base + s.frecency.bonus(&id), c, alias))
         })
         .collect();
-    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.title.cmp(&b.1.title)));
-    top.extend(scored.into_iter().take(14).map(|(_, it)| it));
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.title(s).cmp(b.1.title(s))));
+    top.extend(scored.into_iter().take(14).map(|(_, c, alias)| {
+        let mut it = c.item(s);
+        if let Some(a) = alias {
+            it.accessory = format!("{} · {a}", it.accessory);
+        }
+        it
+    }));
     if !top.is_empty() {
         sections.push(Section { title: "Results".into(), items: top });
     }
@@ -483,15 +533,10 @@ pub fn clipboard_view(clips: &[Clip], q: &str) -> Vec<Section> {
     let row = |(i, c): (usize, &Clip)| {
         let first = c.text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
         let title: String = first.chars().take(120).collect();
-        // A copied file goes back on the clipboard as the file, not its path.
-        let (paste, copy) = if c.file {
-            (Run::PasteFile(PathBuf::from(&c.text)), Run::CopyFile(PathBuf::from(&c.text)))
-        } else {
-            (Run::Paste(c.text.clone()), Run::Copy(c.text.clone()))
-        };
+        // By index: a long clip isn't copied into every action, every frame.
         let mut actions = vec![
-            act("Paste to Active App", "doc.on.clipboard", None, paste),
-            act("Copy to Clipboard", "doc.on.doc", Some(Shortcut::cmd(Key::Enter)), copy),
+            act("Paste to Active App", "doc.on.clipboard", None, Run::PasteClip(i)),
+            act("Copy to Clipboard", "doc.on.doc", Some(Shortcut::cmd(Key::Enter)), Run::CopyClip(i)),
             act(if c.pinned { "Unpin" } else { "Pin" }, "pin", Some(Shortcut::cmd_shift(Key::P)), Run::PinClip(i)),
             act("Delete Entry", "trash", Some(Shortcut::ctrl(Key::X)), Run::DeleteClip(i)),
             act("Clear All History", "trash.slash", None, Run::Cmd(Cmd::ClearClipboardHistory)),
@@ -499,7 +544,7 @@ pub fn clipboard_view(clips: &[Clip], q: &str) -> Vec<Section> {
         let icon = if c.file {
             actions.insert(2, act("Show in Finder", "folder", Some(Shortcut::cmd(Key::O)), Run::Reveal(PathBuf::from(&c.text))));
             Icon::Img(Img::File(PathBuf::from(&c.text)))
-        } else if let Some(col) = color::parse(&c.text) {
+        } else if let Some(col) = (c.text.len() < 64).then(|| color::parse(&c.text)).flatten() {
             Icon::Swatch(col)
         } else if c.text.starts_with("http://") || c.text.starts_with("https://") {
             actions.insert(2, act("Open Link", "safari", Some(Shortcut::cmd(Key::O)), Run::OpenUrl(c.text.trim().to_string())));
@@ -509,7 +554,8 @@ pub fn clipboard_view(clips: &[Clip], q: &str) -> Vec<Section> {
         };
         let mut it = Item::new("", title, icon, actions);
         it.accessory = if c.pinned { "Pinned".into() } else { String::new() };
-        it.preview = Some(c.text.clone());
+        // The pane shows the first 4,000 characters; don't carry the rest around.
+        it.preview = Some(c.text.chars().take(4000).collect());
         let mut d = vec![];
         if !c.app.is_empty() {
             d.push(("Application".to_string(), c.app.clone()));

@@ -79,8 +79,8 @@ fn search(q: &str, scope: FileScope, limit: usize, superseded: impl Fn() -> bool
     let mut child = cmd.spawn().ok()?;
     let mut hits = Vec::new();
     if let Some(out) = child.stdout.take() {
-        for line in BufReader::new(out).lines().map_while(Result::ok).take(SCAN) {
-            if hits.len() % 100 == 0 && superseded() {
+        for (n, line) in BufReader::new(out).lines().map_while(Result::ok).take(SCAN).enumerate() {
+            if n % 100 == 0 && superseded() {
                 let _ = child.kill();
                 let _ = child.wait();
                 return None;
@@ -129,9 +129,6 @@ fn rank(q: &str, hits: Vec<PathBuf>, home: &Path, limit: usize) -> Vec<PathBuf> 
             s -= name.len().min(80) as i32;
             if p.starts_with(home) {
                 s += 40;
-            }
-            if p.is_dir() {
-                s += 10;
             }
             (s, p)
         })
