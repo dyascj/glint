@@ -40,9 +40,6 @@ use crate::search::scripts::{self, ListItem, Mode, Output, Script};
 use crate::settings::Settings;
 use items::{Run, Section};
 
-/// Coming back within this long keeps where you were; later it starts fresh.
-const KEEP_STATE: f64 = 90.0;
-
 pub enum Msg {
     Toggle,
     Show,
@@ -223,7 +220,6 @@ pub struct Launcher {
     windows: HashMap<String, Child>,
     pub shown: bool,
     pub shown_at: f64,
-    hidden_at: f64,
     was_focused: bool,
     prev_app: Option<(String, i32)>,
     pub focus_query: bool,
@@ -325,7 +321,6 @@ impl Launcher {
             windows: HashMap::new(),
             shown: false,
             shown_at: 0.0,
-            hidden_at: f64::NEG_INFINITY,
             was_focused: false,
             prev_app: None,
             focus_query: true,
@@ -395,11 +390,10 @@ impl Launcher {
         }
         // Remember who had focus so "Hide others" and pasting go back to them.
         self.prev_app = macos::frontmost().filter(|(_, pid)| *pid != std::process::id() as i32);
-        if now - self.hidden_at > KEEP_STATE {
-            self.stack.truncate(1);
-            self.stack[0].query.clear();
-            self.stack[0].selected = 0;
-        }
+        // Every open starts fresh: root page, empty search.
+        self.stack.truncate(1);
+        self.stack[0].query.clear();
+        self.stack[0].selected = 0;
         if self.apps_at.elapsed() > Duration::from_secs(30) {
             self.apps = apps::scan();
             self.apps_at = Instant::now();
@@ -419,12 +413,11 @@ impl Launcher {
         self.tried("open");
     }
 
-    pub fn hide(&mut self, now: f64) {
+    pub fn hide(&mut self, _now: f64) {
         if !self.shown {
             return;
         }
         self.shown = false;
-        self.hidden_at = now;
         self.actions = None;
         self.confirm = None;
         if let Some(mtm) = MainThreadMarker::new() {
