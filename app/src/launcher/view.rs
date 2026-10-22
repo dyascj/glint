@@ -356,6 +356,9 @@ impl Launcher {
             View::Extensions => "Search extensions…".into(),
             View::Processes => "Search running apps…".into(),
             View::List { .. } => "Search…".into(),
+            View::Menus { app, .. } if !app.is_empty() => format!("Search {app} menus…"),
+            View::Menus { .. } => "Search menus…".into(),
+            View::Windows { .. } => "Search open windows…".into(),
             _ => String::new(),
         }
     }
@@ -365,7 +368,8 @@ impl Launcher {
         let r = ui.max_rect();
         let depth = self.stack.len();
         ui.painter().hline((r.left() - 18.0)..=(r.right() + 18.0), r.bottom() - 0.5, Stroke::new(1.0, p.line));
-        let loading = self.file_loading || matches!(&self.page().view, View::Output { text: None, .. } | View::List { due: Some(_), .. });
+        let loading = self.file_loading
+            || matches!(&self.page().view, View::Output { text: None, .. } | View::List { due: Some(_), .. } | View::Menus { items: None, error: None, .. } | View::Windows { items: None, .. });
         if loading {
             // A thin progress sweep under the search bar.
             let t = ((now * 0.9) % 1.0) as f32;
@@ -469,6 +473,10 @@ impl Launcher {
             View::Clipboard => ("Nothing copied yet", "Copy something and it shows up here."),
             View::Snippets => ("No snippets yet", "Create one with Create Snippet."),
             View::List { .. } => ("No results", ""),
+            View::Menus { error: Some(e), .. } => (e.as_str(), "Open an app, then try again."),
+            View::Menus { items: None, .. } => ("Reading menus…", ""),
+            View::Windows { items: None, .. } => ("Finding windows…", ""),
+            View::Windows { .. } if self.page().query.is_empty() => ("No open windows", "Windows on other Spaces aren't listed."),
             _ => ("No results", "Try another word, or press ⌘K for actions."),
         };
         let c = r.center() - vec2(0.0, 20.0);

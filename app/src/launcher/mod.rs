@@ -33,6 +33,7 @@ use crate::macos::{self, Img, Running};
 use crate::paths::{self, APP_NAME};
 use crate::prefs::{self, Prefs};
 use crate::search::apps::{self, App};
+use crate::search::ax::{self, MenuItem, Window};
 use crate::search::color::Rgb;
 use crate::search::data::{self, Calculation, Clip, Frecency, Quicklink, SavedColor, Snippet};
 use crate::search::files::FileSearch;
@@ -53,6 +54,8 @@ pub enum Msg {
     ScriptDone(u64, Output),
     ListDone(u64, Result<Vec<ListItem>, String>),
     InlineDone(PathBuf, String),
+    MenusDone(u64, i32, Result<Vec<MenuItem>, String>),
+    WindowsDone(u64, Vec<Window>),
     UpdateFound(updates::Release),
     UpdateDone(updates::Release, Result<(), String>),
     SettingsChanged,
@@ -116,6 +119,9 @@ pub enum View {
     /// Extension views hold the script's path; indices shift when the folder reloads.
     Output { title: String, text: Option<String>, ok: bool, rerun: (PathBuf, Vec<String>), token: u64 },
     List { script: PathBuf, items: Vec<ListItem>, error: Option<String>, token: u64, asked: Option<String>, due: Option<f64> },
+    /// The front app's menu bar; None while it's being read.
+    Menus { app: String, items: Option<Vec<MenuItem>>, error: Option<String>, token: u64 },
+    Windows { items: Option<Vec<Window>>, token: u64 },
     Args { title: String, target: ArgsFor, values: Vec<String>, placeholders: Vec<String>, secure: Vec<bool>, focus: usize },
     Form(Form),
 }
@@ -134,6 +140,8 @@ impl View {
             View::Snippets => def(Cmd::SearchSnippets),
             View::Extensions => def(Cmd::Extensions),
             View::Processes => def(Cmd::QuitApplications),
+            View::Menus { .. } => def(Cmd::SearchMenuItems),
+            View::Windows { .. } => def(Cmd::SwitchWindows),
             View::Ramp(c) => format!("Shades of {}", c.hex()),
             View::Output { title, .. } | View::Args { title, .. } => title.clone(),
             View::List { .. } => "Extension".into(),
@@ -198,6 +206,8 @@ pub struct Launcher {
     pub calculations: Vec<Calculation>,
     pub frecency: Frecency,
     pub running: Vec<Running>,
+    /// The last menus read, shown at once next time while they refresh.
+    menu_cache: Option<(i32, Vec<MenuItem>)>,
     files: FileSearch,
     file_token: u64,
     pub file_results: Vec<PathBuf>,
@@ -300,6 +310,7 @@ impl Launcher {
             calculations: Vec::new(),
             frecency: Frecency::load(),
             running: Vec::new(),
+            menu_cache: None,
             files: FileSearch::new(move || notify_ctx.request_repaint()),
             file_token: 0,
             file_results: Vec::new(),
@@ -513,6 +524,8 @@ impl Launcher {
             View::Processes => items::processes_view(&self.running, &q),
             View::Calculations => items::calculations_view(&self.calculations, &q),
             View::List { items: li, .. } => items::list_view(li, &q),
+            View::Menus { items: m, error, .. } => items::menus_view(m.as_deref(), error.as_deref(), macos::ax_trusted(), &q),
+            View::Windows { items: w, .. } => items::windows_view(w.as_deref(), macos::ax_trusted(), &q),
             View::Ramp(c) => items::ramp_view(*c, self.settings.color_format),
             _ => Vec::new(),
         };
@@ -760,6 +773,22 @@ impl Launcher {
                     self.run_script(i, args, now);
                 }
             }
+            Run::PressMenu(e) => {
+                self.hide(now);
+                std::thread::spawn(move || {
+                    // Let the app come back to the front first.
+                    std::thread::sleep(Duration::from_millis(120));
+                    if !ax::press(&e) {
+                        send(Msg::Hud("That menu item is no longer there".into()));
+                    }
+                });
+            }
+            Run::RaiseWindow(pid, e) => {
+                self.hide(now);
+                std::thread::spawn(move || {
+                    ax::raise(pid, &e);
+                });
+            }
             Run::Calculation(input, raw) => {
                 data::push_calculation(&input, &raw);
                 self.tried("calc");
@@ -804,6 +833,33 @@ impl Launcher {
                 self.push(View::Files, q);
             }
             Cmd::ClipboardHistory => self.push(View::Clipboard, String::new()),
+            Cmd::SearchMenuItems => {
+                self.token += 1;
+                let token = self.token;
+                let front = self.prev_app.clone();
+                let app = front.as_ref().map(|(n, _)| n.clone()).unwrap_or_default();
+                let error = front.is_none().then(|| "There's no app in front to search".to_string());
+                let trusted = macos::ax_trusted();
+                if let Some((_, pid)) = front.clone()
+                    && trusted
+                {
+                    std::thread::spawn(move || send(Msg::MenusDone(token, pid, ax::menu_items(pid))));
+                }
+                let cached = self.menu_cache.as_ref().filter(|(pid, _)| front.as_ref().is_some_and(|(_, p)| p == pid)).map(|(_, v)| v.clone());
+                // Without Accessibility there's nothing to wait for.
+                let items = if trusted { cached } else { Some(Vec::new()) };
+                self.push(View::Menus { app, items, error, token }, String::new());
+            }
+            Cmd::SwitchWindows => {
+                self.token += 1;
+                let token = self.token;
+                let trusted = macos::ax_trusted();
+                if trusted {
+                    let apps = macos::running_apps();
+                    std::thread::spawn(move || send(Msg::WindowsDone(token, ax::windows(&apps))));
+                }
+                self.push(View::Windows { items: (!trusted).then(Vec::new), token }, String::new());
+            }
             Cmd::SearchEmoji => {
                 let q = if "search emoji & symbols".starts_with(&root_query.to_lowercase()) || "emoji".starts_with(&root_query.to_lowercase()) { carry() } else { root_query };
                 self.push(View::Emoji, q);
@@ -1171,7 +1227,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
         if let Some(def) = commands::by_id(id) {
             let shows = matches!(
                 def.cmd,
-                Cmd::SearchFiles | Cmd::ClipboardHistory | Cmd::SearchEmoji | Cmd::SavedColors | Cmd::CalculatorHistory | Cmd::SearchQuicklinks
+                Cmd::SearchFiles | Cmd::ClipboardHistory | Cmd::SearchMenuItems | Cmd::SwitchWindows | Cmd::SearchEmoji | Cmd::SavedColors | Cmd::CalculatorHistory | Cmd::SearchQuicklinks
                     | Cmd::SearchSnippets | Cmd::Extensions | Cmd::QuitApplications | Cmd::CreateQuicklink | Cmd::CreateSnippet | Cmd::CreateExtension
             ) || def.confirm.is_some();
             if shows {
@@ -1341,6 +1397,32 @@ tell application "System Events" to tell appearance preferences to get dark mode
                             }
                             Err(e) => *error = Some(e.clone()),
                         }
+                    }
+                }
+                self.epoch += 1;
+            }
+            Msg::MenusDone(token, pid, result) => {
+                if let Ok(v) = &result {
+                    self.menu_cache = Some((pid, v.clone()));
+                }
+                for p in &mut self.stack {
+                    if let View::Menus { token: t, items, error, .. } = &mut p.view
+                        && *t == token
+                    {
+                        match &result {
+                            Ok(v) => *items = Some(v.clone()),
+                            Err(e) => *error = Some(e.clone()),
+                        }
+                    }
+                }
+                self.epoch += 1;
+            }
+            Msg::WindowsDone(token, found) => {
+                for p in &mut self.stack {
+                    if let View::Windows { token: t, items } = &mut p.view
+                        && *t == token
+                    {
+                        *items = Some(found.clone());
                     }
                 }
                 self.epoch += 1;

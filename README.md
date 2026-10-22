@@ -41,6 +41,8 @@ It's a Raycast alternative written in 100% Rust: one small native binary, no Ele
 - **Emoji & Symbols** search.
 - **Quicklinks** with `{query}` placeholders (Google, DuckDuckGo, GitHub, YouTube, Wikipedia, Maps and Define Word come built in) and **Snippets** with `{clipboard}`, `{date}` and `{time}`.
 - **System commands:** Lock Screen, Sleep, Restart, Shut Down, Log Out, Empty Trash, Eject All Disks, Toggle System Appearance, Toggle Hidden Files, Hide Others, Quit All Apps, Mute and volume, Screen Saver, and Quit Applications for anything running.
+- **Search Menu Items** in the app you were using: every command in its menu bar, with its shortcut, one search away.
+- **Switch Windows** across every app, frontmost first, including minimized ones.
 - **System Settings panes** searchable by name.
 - **Aliases and hotkeys** for any command, app, extension or quicklink.
 - **Fallbacks:** when nothing matches, use the text for a web search, a file search or an emoji search.
@@ -55,7 +57,7 @@ It's a Raycast alternative written in 100% Rust: one small native binary, no Ele
    ```
 3. Onboarding asks for your hotkey. The default is `⌥ Space`; **Use ⌘ Space** turns off Spotlight's shortcut and gives it to Glint, and you can undo it any time.
 
-Accessibility access is optional. It only lets Glint press `⌘V` for you when you choose a clipboard item, snippet or emoji. Without it, Glint copies and you paste.
+Accessibility access is optional. It lets Glint press `⌘V` for you when you choose a clipboard item, snippet or emoji, and it powers Search Menu Items and Switch Windows. Without it, Glint copies and you paste.
 
 Updates install from the menu bar with one click. Glint checks GitHub once a day and verifies every download against a signing key built into the app before swapping it in.
 
