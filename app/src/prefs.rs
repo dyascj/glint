@@ -3,7 +3,10 @@
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
+use std::sync::{LazyLock, Mutex};
+use std::time::SystemTime;
 
 use crate::paths;
 
@@ -18,7 +21,24 @@ pub fn save<T: Serialize>(name: &str, value: &T) -> std::io::Result<()> {
     let file = paths::data(name);
     let tmp = file.with_extension("json.tmp");
     fs::write(&tmp, serde_json::to_vec_pretty(value).unwrap_or_default())?;
-    fs::rename(tmp, file)
+    fs::rename(&tmp, &file)?;
+    own_writes().insert(name.to_string(), mtime(&file));
+    Ok(())
+}
+
+/// The mtime each file had after this process last saved it.
+fn own_writes() -> std::sync::MutexGuard<'static, HashMap<String, Option<SystemTime>>> {
+    static OWN: LazyLock<Mutex<HashMap<String, Option<SystemTime>>>> = LazyLock::new(Mutex::default);
+    OWN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether another process (a Settings window) wrote `name` after we last did.
+pub fn changed_elsewhere(name: &str) -> bool {
+    own_writes().get(name).is_none_or(|m| *m != mtime(&paths::data(name)))
+}
+
+fn mtime(p: &std::path::Path) -> Option<SystemTime> {
+    fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

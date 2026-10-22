@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::paths;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct App {
     pub name: String,
     pub path: PathBuf,

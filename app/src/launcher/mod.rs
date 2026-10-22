@@ -61,6 +61,7 @@ pub enum Msg {
     SettingsChanged,
     ExtensionsChanged,
     DataChanged,
+    Apps(Vec<App>),
 }
 
 static TX: OnceLock<Sender<Msg>> = OnceLock::new();
@@ -171,7 +172,6 @@ impl Page {
 #[serde(rename_all = "camelCase", default)]
 pub struct Runtime {
     pub pid: i32,
-    pub opened: u32,
     pub tried: BTreeSet<String>,
     pub hotkey_error: Option<String>,
     pub update_available: Option<String>,
@@ -214,9 +214,11 @@ pub struct Launcher {
     file_for: String,
     /// How many results `file_results` was asked for.
     file_limit: usize,
-    file_due: Option<f64>,
+    pub file_due: Option<f64>,
     pub file_loading: bool,
     pub sections: Vec<Section>,
+    /// The emoji grid's sections, rebuilt with `sections`.
+    pub emoji: Vec<(String, Vec<view::Emoji>)>,
     sections_key: (usize, String, u64),
     pub epoch: u64,
     pub icons: Icons,
@@ -319,6 +321,7 @@ impl Launcher {
             file_due: None,
             file_loading: false,
             sections: Vec::new(),
+            emoji: Vec::new(),
             sections_key: (usize::MAX, String::new(), 0),
             epoch: 0,
             icons: Icons::new(ctx),
@@ -406,9 +409,9 @@ impl Launcher {
         self.stack[0].query.clear();
         self.stack[0].selected = 0;
         if self.apps_at.elapsed() > Duration::from_secs(30) {
-            self.apps = apps::scan();
+            // Rescan in the background; the window shouldn't wait on the disk.
             self.apps_at = Instant::now();
-            self.epoch += 1;
+            std::thread::spawn(|| send(Msg::Apps(apps::scan())));
         }
         self.running = macos::running_apps();
         self.refresh_inline();
@@ -420,7 +423,6 @@ impl Launcher {
         self.was_focused = false;
         self.epoch += 1;
         window::show(mtm);
-        self.runtime.opened += 1;
         self.tried("open");
     }
 
@@ -452,8 +454,8 @@ impl Launcher {
     }
 
     fn tried(&mut self, what: &str) {
-        // "open" is counted every time; the rest only the first.
-        if self.runtime.tried.insert(what.to_string()) || what == "open" {
+        // Only the first time matters (onboarding ticks it off).
+        if self.runtime.tried.insert(what.to_string()) {
             self.write_runtime();
         }
     }
@@ -510,13 +512,14 @@ impl Launcher {
                     scripts: &self.scripts,
                     inline: &self.inline,
                     quicklinks: &self.quicklinks,
-                    files: if self.file_for == q.trim() { &self.file_results } else { &[] },
+                    // The last results stay up while the next search runs, so rows don't flash.
+                    files: &self.file_results,
                     running: &self.running,
                     settings: &self.settings,
                     frecency: &self.frecency,
                 },
             ),
-            View::Files => items::files_view(if self.file_for == q.trim() { &self.file_results } else { &[] }),
+            View::Files => items::files_view(&self.file_results),
             View::Clipboard => items::clipboard_view(&self.clips, &q),
             View::Quicklinks => items::quicklinks_view(&self.quicklinks, &q),
             View::Snippets => items::snippets_view(&self.snippets, &q),
@@ -530,8 +533,13 @@ impl Launcher {
             _ => Vec::new(),
         };
         let same_page = self.sections_key.0 == key.0 && self.sections_key.1 == key.1;
+        // New data for the same text (files landing, a new clip) keeps the
+        // selection on the same row instead of whatever slid under it.
+        let keep = if same_page { self.selected_item().map(|it| (it.id.clone(), it.title.clone())) } else { None };
         self.sections = sections;
         self.sections_key = key;
+        self.emoji = if matches!(self.page().view, View::Emoji) { self.emoji_sections() } else { Vec::new() };
+        let found = keep.and_then(|(id, title)| self.sections.iter().flat_map(|s| &s.items).position(|it| it.id == id && it.title == title));
         let n = self.sections.iter().map(|s| s.items.len()).sum::<usize>();
         // Grids (emoji, colors) have no sections; they clamp themselves.
         let grid = matches!(self.page().view, View::Emoji | View::Colors);
@@ -539,6 +547,9 @@ impl Launcher {
         if !same_page {
             // New text: the best match is on top.
             page.selected = 0;
+        }
+        if let Some(i) = found {
+            page.selected = i;
         }
         if !grid {
             page.selected = page.selected.min(n.saturating_sub(1));
@@ -645,7 +656,7 @@ impl Launcher {
             }
             Run::EditFile(p) => {
                 self.hide(now);
-                let _ = Command::new("/usr/bin/open").arg("-t").arg(&p).status();
+                macos::open_with(&["-t".as_ref(), p.as_os_str()]);
             }
             Run::Copy(s) => {
                 macos::copy(&s);
@@ -670,6 +681,17 @@ impl Launcher {
                 self.hud("Copied File");
             }
             Run::Paste(s) => self.paste(&s, now),
+            Run::PasteClip(i) | Run::CopyClip(i) => {
+                let Some(c) = self.clips.get(i) else { return };
+                // A copied file goes back on the clipboard as the file, not its path.
+                let next = match (c.file, matches!(run, Run::PasteClip(_))) {
+                    (true, true) => Run::PasteFile(PathBuf::from(&c.text)),
+                    (true, false) => Run::CopyFile(PathBuf::from(&c.text)),
+                    (false, true) => Run::Paste(c.text.clone()),
+                    (false, false) => Run::Copy(c.text.clone()),
+                };
+                self.run(next, "", now);
+            }
             Run::Cmd(c) => self.run_cmd(c, now),
             Run::Script(i, args) => self.run_script(i, args, now),
             Run::ScriptArgs(i) => {
@@ -706,10 +728,9 @@ impl Launcher {
                 let name = self.running.iter().find(|r| r.pid == pid).map(|r| r.name.clone()).unwrap_or_default();
                 if macos::quit_app(pid, force) {
                     self.toast(format!("{} {name}", if force { "Force quit" } else { "Quit" }), true, now);
+                    self.running.retain(|r| r.pid != pid);
+                    self.epoch += 1;
                 }
-                std::thread::sleep(Duration::from_millis(150));
-                self.running = macos::running_apps();
-                self.epoch += 1;
             }
             Run::PinClip(i) => {
                 if let Some(c) = self.clips.get_mut(i) {
@@ -822,11 +843,6 @@ impl Launcher {
             return;
         }
         self.confirm = None;
-        let hud = |s: &str| {
-            if let Some(mtm) = MainThreadMarker::new() {
-                window::hud(mtm, s);
-            }
-        };
         match c {
             Cmd::SearchFiles => {
                 let q = if commands::def(Cmd::SearchFiles).title.to_lowercase().starts_with(&root_query.to_lowercase()) { carry() } else { root_query };
@@ -939,7 +955,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
             }
             Cmd::ToggleHiddenFiles => {
                 self.hide(now);
-                hud(if macos::toggle_hidden_files() { "Showing hidden files" } else { "Hiding hidden files" });
+                background(|| Ok(if macos::toggle_hidden_files() { "Showing hidden files" } else { "Hiding hidden files" }.into()));
             }
             Cmd::HideOthers => {
                 self.hide(now);
@@ -1040,10 +1056,8 @@ tell application "System Events" to tell appearance preferences to get dark mode
     /// Runs a list extension again once typing pauses.
     pub fn tick_list(&mut self, now: f64) {
         let q = self.page().query.clone();
-        let scripts = self.scripts.clone();
-        self.token += 1;
-        let next = self.token;
-        let page = self.page_mut();
+        let next = self.token + 1;
+        let Some(page) = self.stack.last_mut() else { return };
         let View::List { script, token, asked, due, .. } = &mut page.view else { return };
         if asked.as_deref() != Some(q.as_str()) && due.is_none() {
             *due = Some(now + 0.2);
@@ -1052,7 +1066,8 @@ tell application "System Events" to tell appearance preferences to get dark mode
             *due = None;
             *asked = Some(q.clone());
             *token = next;
-            if let Some(s) = scripts.iter().find(|s| &s.path == script).cloned() {
+            self.token = next;
+            if let Some(s) = self.scripts.iter().find(|s| &s.path == script).cloned() {
                 std::thread::spawn(move || {
                     let out = scripts::run(&s, &[q], Duration::from_secs(15));
                     let parsed = if out.ok { scripts::parse_list(&out.text) } else { Err(out.text) };
@@ -1130,7 +1145,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
                                 use std::os::unix::fs::PermissionsExt;
                                 let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755));
                                 self.reload_scripts();
-                                let _ = Command::new("/usr/bin/open").arg("-t").arg(&path).status();
+                                macos::open_with(&["-t".as_ref(), path.as_os_str()]);
                                 Ok(format!("Created {}", paths::tilde(&path)))
                             }
                             Err(e) => Err(e.to_string()),
@@ -1452,13 +1467,32 @@ tell application "System Events" to tell appearance preferences to get dark mode
                     self.sync_tray();
                 }
             },
+            Msg::Apps(found) => {
+                if found != self.apps {
+                    self.icons.warm(found.iter().map(|a| Img::File(a.path.clone())));
+                    self.apps = found;
+                    self.epoch += 1;
+                }
+            }
             Msg::SettingsChanged => self.settings_changed(),
             Msg::ExtensionsChanged => self.reload_scripts(),
+            // Only files a Settings window changed; our own saves aren't news.
             Msg::DataChanged => {
-                self.quicklinks = data::load_quicklinks();
-                self.snippets = data::load_snippets();
-                self.colors = data::load_colors();
-                self.clips = data::load_clips();
+                if prefs::changed_elsewhere(data::QUICKLINKS) {
+                    self.quicklinks = data::load_quicklinks();
+                }
+                if prefs::changed_elsewhere(data::SNIPPETS) {
+                    self.snippets = data::load_snippets();
+                }
+                if prefs::changed_elsewhere(data::COLORS) {
+                    self.colors = data::load_colors();
+                }
+                if prefs::changed_elsewhere(data::CLIPBOARD) {
+                    self.clips = data::load_clips();
+                }
+                if prefs::changed_elsewhere(Frecency::FILE) {
+                    self.frecency = Frecency::load();
+                }
                 self.epoch += 1;
             }
         }
@@ -1576,7 +1610,7 @@ fn tree_mtime(dir: &std::path::Path) -> Option<SystemTime> {
 /// Watches settings, data files and the Extensions folder; watches the clipboard.
 fn spawn_watchers() {
     std::thread::spawn(|| {
-        let data_files = [data::QUICKLINKS, data::SNIPPETS, data::COLORS, data::CLIPBOARD];
+        let data_files = [data::QUICKLINKS, data::SNIPPETS, data::COLORS, data::CLIPBOARD, Frecency::FILE];
         let stamp = |names: &[&str]| names.iter().map(|n| mtime(&paths::data(n))).collect::<Vec<_>>();
         let mut settings = mtime(&paths::settings_file());
         let mut ext = tree_mtime(&paths::extensions_dir());
@@ -1604,20 +1638,23 @@ fn spawn_watchers() {
         let mut last = macos::change_count();
         loop {
             std::thread::sleep(Duration::from_millis(450));
-            let n = macos::change_count();
-            if n == last {
-                continue;
-            }
-            last = n;
-            if !CLIPBOARD_ON.load(Ordering::Relaxed) || macos::clipboard_concealed() {
-                continue;
-            }
-            if let Some((text, file)) = macos::read_clipboard()
-                && !text.trim().is_empty()
-            {
-                let app = macos::frontmost().map(|(n, _)| n).unwrap_or_default();
-                send(Msg::Clip(Clip { text, file, at: data::now(), pinned: false, app }));
-            }
+            // A long-lived thread: drain what AppKit autoreleases on every pass.
+            objc2::rc::autoreleasepool(|_| {
+                let n = macos::change_count();
+                if n == last {
+                    return;
+                }
+                last = n;
+                if !CLIPBOARD_ON.load(Ordering::Relaxed) || macos::clipboard_concealed() {
+                    return;
+                }
+                if let Some((text, file)) = macos::read_clipboard()
+                    && !text.trim().is_empty()
+                {
+                    let app = macos::frontmost().map(|(n, _)| n).unwrap_or_default();
+                    send(Msg::Clip(Clip { text, file, at: data::now(), pinned: false, app }));
+                }
+            });
         }
     });
 }
@@ -1666,9 +1703,14 @@ fn quit() -> ! {
     std::process::exit(0)
 }
 
-/// Local "YYYY-MM-DD" and "HH:MM" via /bin/date (no time zone tables needed).
+/// Local "YYYY-MM-DD" and "HH:MM" from libc (the system's own time zone).
 fn local_date_time() -> (String, String) {
-    let out = Command::new("/bin/date").arg("+%Y-%m-%d|%H:%M").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-    let (d, t) = out.split_once('|').unwrap_or(("", ""));
-    (d.to_string(), t.to_string())
+    // SAFETY: localtime_r fills the zeroed tm we own.
+    let tm = unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        tm
+    };
+    (format!("{:04}-{:02}-{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday), format!("{:02}:{:02}", tm.tm_hour, tm.tm_min))
 }
