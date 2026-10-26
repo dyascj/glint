@@ -11,7 +11,7 @@ pub fn mark(painter: &Painter, rect: Rect, p: &Pal) {
 }
 
 pub fn mark_colored(painter: &Painter, rect: Rect, ink: Color32, glint: Color32) {
-    // Same geometry as scripts/make-icon.py: bars `w` wide, glint at 0.93w with radius 0.22h.
+    // Bars `w` wide, glint at 0.93w with radius 0.22h.
     let h = rect.height();
     let r = 0.2235 * h;
     let w = (rect.width() - r) / 0.93;
