@@ -51,6 +51,8 @@ It's a Raycast alternative written in 100% Rust: one small native binary, no Ele
 
 ## Install
 
+Glint runs on macOS 13 Ventura or later, on Apple silicon and Intel.
+
 1. Download `Glint.zip` from the [latest release](https://github.com/dyascj/glint/releases/latest) and move `Glint.app` to `/Applications`.
 2. Glint isn't notarized by Apple, so the first launch needs a right-click on `Glint.app`, then **Open**. You can also clear the download flag in Terminal:
    ```sh
@@ -116,11 +118,11 @@ Everything stays on your Mac. Glint has no account and no analytics, and the onl
 ## Build from source
 
 ```sh
-cd app && cargo test && cargo run
+cd app && cargo test && cargo run   # CI also runs cargo fmt --check and cargo clippy -- -D warnings
 scripts/bundle.sh          # dist/Glint.app, ad-hoc signed
 ```
 
-Dev builds never self-update. `GLINT_UI_SNAPSHOT=out.bmp` renders a window to a file without needing Screen Recording permission (`GLINT_QUERY`, `GLINT_VIEW` and `GLINT_UI_PAGE` pick what to show).
+Glint builds only on macOS; on Linux or Windows, `cargo build` stops with one message saying so. Dev builds never self-update. `GLINT_UI_SNAPSHOT=out.bmp` renders a window to a file without needing Screen Recording permission (`GLINT_QUERY`, `GLINT_VIEW` and `GLINT_UI_PAGE` pick what to show).
 
 Releases are cut by pushing a `v*` tag that matches `app/Cargo.toml`. CI builds a universal binary, signs it with the project certificate, signs the downloads with minisign and publishes them with the notes in `release-notes/`.
 
