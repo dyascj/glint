@@ -20,6 +20,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -173,45 +174,73 @@ fn expand(p: &str) -> String {
 
 #[derive(Debug)]
 pub struct Output {
+    /// stdout then stderr, ANSI codes stripped: what the user sees.
     pub text: String,
+    /// stdout alone, for `list` mode, so warnings on stderr don't break the JSON.
+    pub stdout: String,
     pub ok: bool,
 }
 
-/// Runs a script with its arguments; output is stdout+stderr with ANSI codes
-/// stripped. Killed after `timeout`.
+/// More output than anyone reads in a launcher; the rest is drained and dropped.
+const MAX_OUTPUT: usize = 4 << 20;
+
+/// Reads a pipe on its own thread into a capped buffer that can be taken at any
+/// time, so a background process holding the pipe open can't block `run`.
+fn drain(r: Option<impl Read + Send + 'static>, done: mpsc::Sender<()>) -> Arc<Mutex<Vec<u8>>> {
+    let buf = Arc::new(Mutex::new(Vec::new()));
+    let b = buf.clone();
+    std::thread::spawn(move || {
+        if let Some(mut r) = r {
+            let mut chunk = [0u8; 8192];
+            loop {
+                match r.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let mut b = b.lock().unwrap_or_else(|e| e.into_inner());
+                        let room = MAX_OUTPUT.saturating_sub(b.len());
+                        b.extend_from_slice(&chunk[..n.min(room)]);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+        }
+        let _ = done.send(());
+    });
+    buf
+}
+
+fn take(b: &Mutex<Vec<u8>>) -> String {
+    String::from_utf8_lossy(&std::mem::take(&mut *b.lock().unwrap_or_else(|e| e.into_inner()))).into_owned()
+}
+
+/// Runs a script with its arguments in its own process group. The whole group
+/// is killed after `timeout`, so pipelines and background children stop too.
 pub fn run(s: &Script, args: &[String], timeout: Duration) -> Output {
+    use std::os::unix::process::CommandExt;
     ensure_executable(&s.path);
     let dir = s.current_directory.clone().or_else(|| s.path.parent().map(Path::to_path_buf)).unwrap_or_else(paths::home);
     let mut cmd = Command::new(&s.path);
-    cmd.args(args).current_dir(dir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(args).current_dir(dir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0);
     // Scripts expect a login-ish PATH (Homebrew, etc.), not launchd's minimal one.
     cmd.env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".into())));
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) => return Output { text: format!("Couldn't run {}: {e}", s.path.display()), ok: false },
+        Err(e) => {
+            let text = format!("Couldn't run {}: {e}", s.path.display());
+            return Output { text, stdout: String::new(), ok: false };
+        }
     };
-    let mut stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
-    let out_t = std::thread::spawn(move || {
-        let mut b = String::new();
-        if let Some(o) = stdout.as_mut() {
-            let _ = o.read_to_string(&mut b);
-        }
-        b
-    });
-    let err_t = std::thread::spawn(move || {
-        let mut b = String::new();
-        if let Some(e) = stderr.as_mut() {
-            let _ = e.read_to_string(&mut b);
-        }
-        b
-    });
+    let (tx, done) = mpsc::channel();
+    let out_b = drain(child.stdout.take(), tx.clone());
+    let err_b = drain(child.stderr.take(), tx);
     let start = Instant::now();
     let status = loop {
         match child.try_wait() {
             Ok(Some(st)) => break Some(st),
             Ok(None) if start.elapsed() > timeout => {
-                let _ = child.kill();
+                // SAFETY: plain syscall; the group id is the child's pid (process_group(0)).
+                unsafe { libc::killpg(child.id() as libc::pid_t, libc::SIGKILL) };
                 let _ = child.wait();
                 break None;
             }
@@ -219,8 +248,17 @@ pub fn run(s: &Script, args: &[String], timeout: Duration) -> Output {
             Err(_) => break None,
         }
     };
-    let mut text = out_t.join().unwrap_or_default();
-    let err = err_t.join().unwrap_or_default();
+    // Give the readers a moment to finish; a background child may keep a pipe
+    // open indefinitely, and then we keep what arrived so far.
+    let grace = Instant::now() + Duration::from_millis(300);
+    for _ in 0..2 {
+        if done.recv_timeout(grace.saturating_duration_since(Instant::now())).is_err() {
+            break;
+        }
+    }
+    let stdout = take(&out_b);
+    let err = take(&err_b);
+    let mut text = stdout.clone();
     if !err.trim().is_empty() {
         if !text.is_empty() && !text.ends_with('\n') {
             text.push('\n');
@@ -231,7 +269,7 @@ pub fn run(s: &Script, args: &[String], timeout: Duration) -> Output {
     if status.is_none() {
         text.push_str(&format!("\nStopped after {} seconds.", timeout.as_secs()));
     }
-    Output { text: strip_ansi(&text), ok }
+    Output { text: strip_ansi(&text), stdout: strip_ansi(&stdout), ok }
 }
 
 /// Scripts downloaded or copied in often lose the executable bit.
@@ -281,7 +319,8 @@ pub struct ListItem {
 pub fn parse_list(text: &str) -> Result<Vec<ListItem>, String> {
     let start = text.find('[').ok_or("The script didn't print a JSON list.")?;
     let end = text.rfind(']').ok_or("The script didn't print a JSON list.")?;
-    serde_json::from_str::<Vec<ListItem>>(&text[start..=end]).map_err(|e| format!("Couldn't read the script's JSON: {e}"))
+    let json = text.get(start..=end).ok_or("The script didn't print a JSON list.")?;
+    serde_json::from_str::<Vec<ListItem>>(json).map_err(|e| format!("Couldn't read the script's JSON: {e}"))
 }
 
 /// Template for "Create Extension".
@@ -438,6 +477,7 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].copy.as_deref(), Some("a"));
         assert!(parse_list("nothing").is_err());
+        assert!(parse_list("done]\n[").is_err());
     }
 
     #[test]
@@ -453,9 +493,24 @@ mod tests {
         let l = dir.join("list.sh");
         std::fs::write(&l, template("List", "list")).unwrap();
         let s = parse(&l, &std::fs::read_to_string(&l).unwrap()).unwrap();
-        let items = parse_list(&run(&s, &["CJ".into()], Duration::from_secs(5)).text).unwrap();
+        let items = parse_list(&run(&s, &["CJ".into()], Duration::from_secs(5)).stdout).unwrap();
         assert_eq!(items[0].title, "Hello, CJ");
         assert_eq!(strip_ansi("\u{1b}[31mred\u{1b}[0m"), "red");
+        // The timeout stops the whole process group, and a lingering background
+        // child doesn't hold up the result.
+        let slow = dir.join("slow.sh");
+        std::fs::write(&slow, "#!/bin/sh\n# @glint.title Slow\nsleep 30 | cat\n").unwrap();
+        let s = parse(&slow, &std::fs::read_to_string(&slow).unwrap()).unwrap();
+        let t = Instant::now();
+        assert!(!run(&s, &[], Duration::from_millis(300)).ok);
+        assert!(t.elapsed() < Duration::from_secs(5));
+        let bg = dir.join("bg.sh");
+        std::fs::write(&bg, "#!/bin/sh\n# @glint.title Bg\nsleep 30 &\necho hi\nprintf 'caf\\351\\n'\n").unwrap();
+        let s = parse(&bg, &std::fs::read_to_string(&bg).unwrap()).unwrap();
+        let t = Instant::now();
+        let out = run(&s, &[], Duration::from_secs(5));
+        assert!(t.elapsed() < Duration::from_secs(3));
+        assert!(out.ok && out.text.starts_with("hi\ncaf"), "{:?}", out.text);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

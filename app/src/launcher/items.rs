@@ -113,8 +113,8 @@ pub enum Run {
     Quicklink(usize, Option<String>),
     PutInSearch(String),
     QuitApp(i32, bool),
-    PinClip(usize),
-    DeleteClip(usize),
+    PinClip(ClipRef),
+    DeleteClip(ClipRef),
     DeleteColor(usize),
     Ramp(Rgb),
     DeleteQuicklink(usize),
@@ -130,12 +130,12 @@ pub enum Run {
     /// Copies a file itself and pastes it into the front app.
     PasteFile(PathBuf),
     /// Clipboard history entry by index: paste it, or copy it back.
-    PasteClip(usize),
+    PasteClip(ClipRef),
     /// Adds (true) or removes a root item from Favorites.
     Favorite(String, bool),
     /// Moves a favorite up (-1) or down (1).
     MoveFavorite(String, isize),
-    CopyClip(usize),
+    CopyClip(ClipRef),
     /// Clicks an item in the front app's menu bar.
     PressMenu(Elem),
     /// Brings a window (of the app with this pid) to the front.
@@ -148,6 +148,27 @@ pub struct Action {
     pub symbol: &'static str,
     pub shortcut: Option<Shortcut>,
     pub run: Run,
+}
+
+/// A clipboard entry by position, checked against when and how long it was,
+/// so an action opened before a new copy arrives still hits the same entry.
+/// (Cheaper than carrying the text, which can be long, in every row.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClipRef {
+    i: usize,
+    at: u64,
+    len: usize,
+}
+
+impl ClipRef {
+    pub fn new(i: usize, c: &Clip) -> ClipRef {
+        ClipRef { i, at: c.at, len: c.text.len() }
+    }
+
+    pub fn find(self, clips: &[Clip]) -> Option<usize> {
+        let same = |c: &Clip| c.at == self.at && c.text.len() == self.len;
+        if clips.get(self.i).is_some_and(same) { Some(self.i) } else { clips.iter().position(same) }
+    }
 }
 
 fn act(title: impl Into<String>, symbol: &'static str, shortcut: Option<Shortcut>, run: Run) -> Action {
@@ -484,7 +505,7 @@ pub fn root(query: &str, s: &Sources) -> Vec<Section> {
             let b = s.frecency.bonus(id);
             (b > 0).then_some((b, *c))
         }).collect();
-        used.sort_by(|a, b| b.0.cmp(&a.0));
+        used.sort_by_key(|a| std::cmp::Reverse(a.0));
         let mut suggestions: Vec<Item> = used.into_iter().take(6).map(|(_, c)| c.item(s)).collect();
         for cmd in STARTERS {
             let id = commands::def(cmd).id();
@@ -574,10 +595,10 @@ pub fn clipboard_view(clips: &[Clip], q: &str) -> Vec<Section> {
         };
         // By index: a long clip isn't copied into every action, every frame.
         let mut actions = vec![
-            act("Paste to Active App", "doc.on.clipboard", None, Run::PasteClip(i)),
-            act("Copy to Clipboard", "doc.on.doc", Some(Shortcut::cmd(Key::Enter)), Run::CopyClip(i)),
-            act(if c.pinned { "Unpin" } else { "Pin" }, "pin", Some(Shortcut::cmd_shift(Key::P)), Run::PinClip(i)),
-            act("Delete Entry", "trash", Some(Shortcut::ctrl(Key::X)), Run::DeleteClip(i)),
+            act("Paste to Active App", "doc.on.clipboard", None, Run::PasteClip(ClipRef::new(i, c))),
+            act("Copy to Clipboard", "doc.on.doc", Some(Shortcut::cmd(Key::Enter)), Run::CopyClip(ClipRef::new(i, c))),
+            act(if c.pinned { "Unpin" } else { "Pin" }, "pin", Some(Shortcut::cmd_shift(Key::P)), Run::PinClip(ClipRef::new(i, c))),
+            act("Delete Entry", "trash", Some(Shortcut::ctrl(Key::X)), Run::DeleteClip(ClipRef::new(i, c))),
             act("Clear All History", "trash.slash", None, Run::Cmd(Cmd::ClearClipboardHistory)),
         ];
         let icon = if c.image.is_some() {
@@ -629,7 +650,7 @@ fn filter(q: &str, title: &str, extra: &[&str]) -> Option<i32> {
 }
 
 fn ranked(mut v: Vec<(i32, Item)>) -> Vec<Item> {
-    v.sort_by(|a, b| b.0.cmp(&a.0));
+    v.sort_by_key(|a| std::cmp::Reverse(a.0));
     v.into_iter().map(|(_, i)| i).collect()
 }
 

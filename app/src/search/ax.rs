@@ -376,7 +376,7 @@ fn front_to_back() -> Vec<i32> {
     }
     let key = NSString::from_str("kCGWindowOwnerPID");
     // SAFETY: CFArray/CFDictionary are toll-free bridged to NSArray/NSDictionary.
-    let pids = unsafe {
+    unsafe {
         let arr: &NSArray<NSDictionary<NSString, objc2::runtime::AnyObject>> = &*list.cast();
         let mut pids = Vec::new();
         for d in arr.iter() {
@@ -389,8 +389,7 @@ fn front_to_back() -> Vec<i32> {
         }
         CFRelease(list);
         pids
-    };
-    pids
+    }
 }
 
 fn app_windows(a: &Running) -> Vec<Window> {

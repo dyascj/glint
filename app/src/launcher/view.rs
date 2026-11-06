@@ -74,7 +74,7 @@ impl Launcher {
                 let b = self.frecency.bonus(k);
                 (b > 0).then_some((b, e))
             }).collect();
-            recent.sort_by(|a, b| b.0.cmp(&a.0));
+            recent.sort_by_key(|a| std::cmp::Reverse(a.0));
             let mut out = Vec::new();
             if !recent.is_empty() {
                 out.push(("Frequently Used".to_string(), recent.into_iter().take(EMOJI_COLS * 2).map(|(_, e)| e).collect()));
@@ -90,7 +90,7 @@ impl Launcher {
                 crate::search::fuzzy::score(&q, e.name(), &codes).filter(|s| *s >= 500).map(|s| (s + self.frecency.bonus(&format!("emoji:{}", e.as_str())), e))
             })
             .collect();
-        hits.sort_by(|a, b| b.0.cmp(&a.0));
+        hits.sort_by_key(|a| std::cmp::Reverse(a.0));
         vec![("Results".into(), hits.into_iter().map(|(_, e)| e).collect())]
     }
 
@@ -108,7 +108,7 @@ impl Launcher {
         cells
     }
 
-    fn grid_len(&self) -> usize {
+    pub(super) fn grid_len(&self) -> usize {
         match self.page().view {
             View::Emoji => self.emoji.iter().map(|(_, v)| v.len()).sum(),
             View::Colors => self.color_cells().len(),
@@ -251,7 +251,9 @@ impl Launcher {
         }
         let form_multiline = matches!(&self.page().view, View::Form(f) if f.fields.get(f.focus).is_some_and(|x| x.3));
         if take(ctx, true, false, false, Key::Enter) {
-            let a = if matches!(self.page().view, View::Form(_)) { acts.first() } else { acts.get(1) };
+            // The second action is ⌘↵ unless it has a shortcut of its own (Quit
+            // Application, Add to Favorites), which would make ⌘↵ a surprise.
+            let a = if matches!(self.page().view, View::Form(_)) { acts.first() } else { acts.get(1).filter(|a| a.shortcut.is_none()) };
             if let Some(a) = a.cloned() {
                 return self.run_action(&id, a, now);
             }

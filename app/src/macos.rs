@@ -92,6 +92,8 @@ pub fn render(img: &Img, px: usize) -> Option<Vec<u8>> {
         NSGraphicsContext::saveGraphicsState_class();
         NSGraphicsContext::setCurrentContext(Some(&ctx));
         let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(px as f64, px as f64));
+        // Drawing can bail out (a missing image); the graphics state is restored either way.
+        let drawn = (|| -> Option<()> {
         match img {
             Img::File(path) => {
                 let image = NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&path.to_string_lossy()));
@@ -128,8 +130,11 @@ pub fn render(img: &Img, px: usize) -> Option<Vec<u8>> {
                 s.drawAtPoint_withAttributes(NSPoint::new((px as f64 - m.width) / 2.0, (px as f64 - m.height) / 2.0), Some(&attrs));
             }
         }
+        Some(())
+        })();
         ctx.flushGraphics();
         NSGraphicsContext::restoreGraphicsState_class();
+        drawn?;
         let data = rep.bitmapData();
         if data.is_null() {
             return None;

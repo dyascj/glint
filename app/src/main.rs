@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -5,3 +6,6 @@ fn main() {
         _ => glint::launcher::run(),
     }
 }
+
+#[cfg(not(target_os = "macos"))]
+fn main() {}

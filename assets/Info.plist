@@ -33,7 +33,7 @@
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Glint asks Finder and System Events to run commands like Empty Trash, Eject All Disks and Toggle System Appearance.</string>
 	<key>NSHumanReadableCopyright</key>
-	<string>Glint is MIT licensed.</string>
+	<string>Copyright © 2026 Charles Dyas. MIT License.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

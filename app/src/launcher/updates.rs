@@ -1,4 +1,4 @@
-//! Auto-update from GitHub releases, the same flow as Slat. A check at launch
+//! Auto-update from GitHub releases. A check at launch
 //! (when a day has passed since the last success) and hourly asks GitHub for
 //! the latest release; when it is newer and carries a signed build, the menu
 //! offers "Update to <v> and Restart". Installing downloads the build, checks
@@ -78,7 +78,7 @@ pub fn start() {
 }
 
 /// Blocking check that publishes what it finds. `user` reports the outcome
-/// in an alert when nothing new turns up, like Slat.
+/// in an alert when nothing new turns up.
 pub fn check_now(user: bool) {
     let text = match check() {
         Ok(Some(r)) => return send(Msg::UpdateFound(r)),
@@ -98,7 +98,7 @@ pub fn check_now(user: bool) {
 /// Menu "Check for Updates…": opens the releases page for builds that can't self-update.
 pub fn check_in_background() {
     if off() {
-        let _ = crate::macos::open(&releases_url());
+        crate::macos::open(&releases_url());
         return;
     }
     thread::spawn(|| check_now(true));
@@ -178,26 +178,31 @@ pub fn install(r: &Release) -> Result<(), String> {
     // Unpack next to the bundle so the swap is a rename on one disk.
     let stage = parent.join(".glint-update");
     remove(&stage);
-    fs::create_dir_all(&stage).map_err(|e| format!("{}: {e}", stage.display()))?;
+    let result = swap_in(&data, &stage, &target, parent);
+    remove(&stage);
+    result
+}
+
+fn swap_in(data: &[u8], stage: &Path, target: &Path, parent: &Path) -> Result<(), String> {
+    fs::create_dir_all(stage).map_err(|e| format!("{}: {e}", stage.display()))?;
     let archive = stage.join(ASSET);
-    fs::write(&archive, &data).map_err(|e| e.to_string())?;
-    let ok = Command::new("/usr/bin/tar").arg("-xzf").arg(&archive).arg("-C").arg(&stage).status().is_ok_and(|s| s.success());
+    fs::write(&archive, data).map_err(|e| e.to_string())?;
+    let ok = Command::new("/usr/bin/tar").arg("-xzf").arg(&archive).arg("-C").arg(stage).status().is_ok_and(|s| s.success());
     let fresh = stage.join("Glint.app");
     if !ok || !fresh.exists() {
-        remove(&stage);
         return Err(if ok { "the download is missing the app" } else { "couldn't unpack the download" }.into());
     }
     // Move the running copy aside (allowed while it runs), put the new one in its place.
     let old = parent.join(".Glint-old.app");
     remove(&old);
-    fs::rename(&target, &old).map_err(|e| format!("{}: {e}", target.display()))?;
-    if let Err(e) = fs::rename(&fresh, &target) {
-        let _ = fs::rename(&old, &target);
-        remove(&stage);
-        return Err(e.to_string());
+    fs::rename(target, &old).map_err(|e| format!("{}: {e}", target.display()))?;
+    if let Err(e) = fs::rename(&fresh, target) {
+        return Err(match fs::rename(&old, target) {
+            Ok(()) => e.to_string(),
+            Err(back) => format!("{e}; the previous version is at {} ({back})", old.display()),
+        });
     }
     remove(&old);
-    remove(&stage);
     Ok(())
 }
 
@@ -235,7 +240,8 @@ mod tests {
         assert!(!newer("nightly", "1.0.0"));
     }
 
-    // Throwaway key pair from Slat's tests (`minisign -G -W`; the secret was discarded).
+    // A throwaway key pair (`minisign -G -W`; the secret was discarded), so the
+    // fixture's names are from another project. Only the signature math matters.
     const TEST_KEY: &str = "RWSsyJHMPuwwmyn9dmC2inHz+asnAiUrN54jo+cjbAiQYyxmBwPwcs6f";
     const TEST_SIG: &str = "untrusted comment: signature from minisign secret key
 RUSsyJHMPuwwm2tDSHB6wlQ/r0mq39CZjsnezlQ0mmlzEsEFCA+5Gf7EiCtaLdGtSnAefB8tJ2EjQNiNqA3TCbYAzs9GZx8dJQE=

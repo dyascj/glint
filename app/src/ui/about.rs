@@ -7,12 +7,16 @@ use super::{art, chrome, runtime, signal_launcher};
 use crate::launcher::{Runtime, SIG_CHECK_UPDATES, SIG_INSTALL_UPDATE};
 use crate::macos;
 use crate::paths::{APP_NAME, REPO_URL};
+use crate::prefs::Prefs;
 
 #[derive(Default)]
 pub struct About {
     rt: Option<Runtime>,
     next_poll: f64,
-    checked_at: Option<f64>,
+    /// When Check for Updates was clicked: frame time and Unix seconds.
+    checked_at: Option<(f64, u64)>,
+    /// Whether a check finished after that click.
+    checked_ok: bool,
 }
 
 impl About {
@@ -20,6 +24,9 @@ impl About {
         let now = ui.input(|i| i.time);
         if now >= self.next_poll {
             self.rt = Some(runtime());
+            if let Some((_, since)) = self.checked_at {
+                self.checked_ok = Prefs::load().updates_last_checked_at.is_some_and(|t| t >= since);
+            }
             self.next_poll = now + 1.0;
         }
         ui.ctx().request_repaint_after_secs(1.0);
@@ -52,19 +59,27 @@ impl About {
             theme::centered_row(ui, "about-buttons", |ui| {
                 if theme::small_button(ui, "Check for Updates…", Kind::Secondary).clicked() {
                     if signal_launcher(SIG_CHECK_UPDATES) {
-                        self.checked_at = Some(now);
+                        self.checked_at = Some((now, crate::search::data::now()));
+                        self.checked_ok = false;
                     } else {
                         macos::open(&format!("{REPO_URL}/releases/latest"));
                     }
                 }
-                if theme::small_button(ui, "Send feedback", Kind::Secondary).clicked() {
+                if theme::small_button(ui, "Send Feedback…", Kind::Secondary).clicked() {
                     macos::open(&format!("{REPO_URL}/issues/new"));
                 }
             });
-            if let Some(t) = self.checked_at
+            if let Some((t, _)) = self.checked_at
                 && self.rt.as_ref().is_some_and(|r| r.update_available.is_none())
             {
-                ui.label(theme::caption(if now - t < 5.0 { "Checking for updates…" } else { "You're on the latest version." }));
+                let caption = if self.checked_ok {
+                    "You're on the latest version."
+                } else if now - t < 15.0 {
+                    "Checking for updates…"
+                } else {
+                    "Couldn't reach GitHub. Try again later."
+                };
+                ui.label(theme::caption(caption));
             }
             ui.add_space(12.0);
             theme::centered_row(ui, "about-links", |ui| {
@@ -77,7 +92,7 @@ impl About {
                 }
             });
             ui.add_space(14.0);
-            ui.add(egui::Label::new(theme::text("A fast, native launcher for macOS, written in Rust.", 10.5, theme::REGULAR).weak()).wrap());
+            ui.add(egui::Label::new(theme::text("A lightning-fast, native launcher for macOS, written in Rust.", 10.5, theme::REGULAR).weak()).wrap());
         });
     }
 }

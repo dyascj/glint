@@ -98,8 +98,9 @@ impl Onboarding {
             self.s = m;
         }
         Prefs::update(|p| p.onboarding_completed = true);
+        // Also on "Set up later", so the login item matches the setting Settings shows.
+        let _ = crate::login::apply(self.s.start_at_login);
         if start {
-            let _ = crate::login::apply(self.s.start_at_login);
             open_launcher();
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -378,12 +379,12 @@ impl Onboarding {
                 rise(ui, f, 1, |ui| heading(ui, title));
                 ui.add_space(4.0);
                 rise(ui, f, 2, |ui| {
-                    theme::para(ui, theme::body("Accessibility lets Glint paste clipboard history, snippets and emoji into the app you were using. It's optional: without it, Glint copies and you paste.").weak());
+                    theme::para(ui, theme::body("Accessibility lets Glint paste clipboard history, snippets and emoji into the app you were using, and powers Search Menu Items and Switch Windows. It's optional: without it, Glint copies and you paste.").weak());
                 });
                 ui.add_space(12.0);
                 rise(ui, f, 3, |ui| {
                     ui.spacing_mut().item_spacing.y = 6.0;
-                    for reason in ["Only used to press ⌘V for you", "Never reads what's on your screen", "Nothing leaves your Mac"] {
+                    for reason in ["Presses ⌘V to paste for you", "Reads menus and window titles only when you search them", "Nothing leaves your Mac"] {
                         ui.horizontal(|ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(10.0, 16.0), Sense::hover());
                             ui.painter().circle_filled(r.center(), 2.5, p.ink);
@@ -430,7 +431,7 @@ impl Onboarding {
                         let mut glint = self.ax;
                         let mut clicked = false;
                         let mut others = [true, false];
-                        for (i, name) in [APP_NAME, "Terminal", "Slat"].iter().enumerate() {
+                        for (i, name) in [APP_NAME, "Terminal", "Script Editor"].iter().enumerate() {
                             hairline(ui);
                             ui.horizontal(|ui| {
                                 ui.set_height(36.0);

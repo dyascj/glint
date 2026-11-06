@@ -39,7 +39,7 @@ pub struct Pal {
     pub focus: Color32,
     /// Glint gold: the mark's glint, links, focus.
     pub accent: Color32,
-    /// Slat blue, for informational marks.
+    /// Blue, for informational marks.
     pub info: Color32,
     pub success: Color32,
     pub warning: Color32,

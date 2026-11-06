@@ -21,6 +21,9 @@ pub struct FileSearch {
 struct State {
     pending: Option<(u64, String, FileScope, usize)>,
     done: Option<(u64, Vec<PathBuf>)>,
+    /// The running mdfind, killed when a newer query arrives so a stalled
+    /// Spotlight can't hold up every search after it.
+    running: Option<u32>,
 }
 
 impl FileSearch {
@@ -40,7 +43,7 @@ impl FileSearch {
                         st = cv.wait(st).unwrap();
                     }
                 };
-                let found = search(&q, scope, limit, || s.0.lock().unwrap().pending.is_some());
+                let found = search(&q, scope, limit, &s.0);
                 if let Some(found) = found {
                     s.0.lock().unwrap().done = Some((id, found));
                     notify();
@@ -52,7 +55,13 @@ impl FileSearch {
 
     pub fn request(&self, id: u64, query: &str, scope: FileScope, limit: usize) {
         let (lock, cv) = &*self.shared;
-        lock.lock().unwrap().pending = Some((id, query.to_string(), scope, limit));
+        let mut st = lock.lock().unwrap();
+        st.pending = Some((id, query.to_string(), scope, limit));
+        if let Some(pid) = st.running.take() {
+            // SAFETY: plain syscall. The worker clears `running` under this lock
+            // before reaping the child, so the pid can't have been reused.
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        }
         cv.notify_one();
     }
 
@@ -63,9 +72,9 @@ impl FileSearch {
     }
 }
 
-/// Runs mdfind and ranks what it returns. None if `superseded` says a newer
-/// query arrived while reading.
-fn search(q: &str, scope: FileScope, limit: usize, superseded: impl Fn() -> bool) -> Option<Vec<PathBuf>> {
+/// Runs mdfind and ranks what it returns. None if a newer query arrived while
+/// reading.
+fn search(q: &str, scope: FileScope, limit: usize, state: &Mutex<State>) -> Option<Vec<PathBuf>> {
     let q = q.trim();
     if q.chars().count() < 2 {
         return Some(Vec::new());
@@ -76,14 +85,21 @@ fn search(q: &str, scope: FileScope, limit: usize, superseded: impl Fn() -> bool
         cmd.arg("-onlyin").arg(&home);
     }
     cmd.arg("-name").arg(q).stdout(Stdio::piped()).stderr(Stdio::null());
-    let mut child = cmd.spawn().ok()?;
+    let mut child = {
+        let mut st = state.lock().unwrap();
+        if st.pending.is_some() {
+            return None;
+        }
+        let child = cmd.spawn().ok()?;
+        st.running = Some(child.id());
+        child
+    };
+    let superseded = || state.lock().unwrap().pending.is_some();
     let mut hits = Vec::new();
     if let Some(out) = child.stdout.take() {
         for (n, line) in BufReader::new(out).lines().map_while(Result::ok).take(SCAN).enumerate() {
             if n % 100 == 0 && superseded() {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
+                break;
             }
             let p = PathBuf::from(line);
             if !noise(&p, &home) {
@@ -91,9 +107,10 @@ fn search(q: &str, scope: FileScope, limit: usize, superseded: impl Fn() -> bool
             }
         }
     }
+    state.lock().unwrap().running = None;
     let _ = child.kill();
     let _ = child.wait();
-    Some(rank(q, hits, &home, limit))
+    (!superseded()).then(|| rank(q, hits, &home, limit))
 }
 
 /// Paths nobody means when they search for a file.

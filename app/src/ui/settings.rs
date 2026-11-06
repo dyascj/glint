@@ -301,7 +301,7 @@ impl SettingsApp {
         section(ui, "Permissions");
         card(ui, |ui| {
             let (mark, label) = if self.ax { (Mark::On, "Granted") } else { (Mark::Off, "Not granted") };
-            row(ui, "Accessibility", Some("Lets Glint paste clipboard items, snippets and emoji into the app you're using"), None, |ui| {
+            row(ui, "Accessibility", Some("Pastes clipboard items, snippets and emoji into the app you're using, and powers Search Menu Items and Switch Windows"), None, |ui| {
                 if !self.ax && theme::small_button(ui, "Grant Access", Kind::Primary).clicked() {
                     macos::ax_prompt();
                     macos::open(macos::ACCESSIBILITY_URL);
@@ -327,7 +327,7 @@ impl SettingsApp {
             row(ui, "Learned ranking", Some("Things you pick often and recently float to the top"), None, |ui| {
                 if theme::small_button(ui, "Reset", Kind::Secondary).clicked() {
                     let _ = prefs::save(Frecency::FILE, &Frecency::default());
-                    self.note = Some("Ranking reset. It takes effect the next time Glint starts.".into());
+                    self.note = Some("Ranking reset.".into());
                 }
             });
         });
@@ -520,7 +520,7 @@ impl SettingsApp {
                 let caption = paths::tilde(&s.path);
                 row(ui, &s.title, Some(&caption), Some(mode), |ui| {
                     if theme::small_button(ui, "Edit", Kind::Secondary).clicked() {
-                        let _ = std::process::Command::new("/usr/bin/open").arg("-t").arg(&s.path).status();
+                        macos::open_with(&["-t".as_ref(), s.path.as_os_str()]);
                     }
                 });
             }
@@ -530,17 +530,15 @@ impl SettingsApp {
             ui.add_space(12.0);
             theme::para(ui, theme::body("Any language works. Put metadata in comments at the top, make the file executable, and Glint picks it up within a second.").weak());
             ui.add_space(8.0);
-            let sample = "#!/bin/bash\n# @glint.title Say Hello\n# @glint.mode fullOutput   # silent · compact · inline · list\n# @glint.argument1 { \"type\": \"text\", \"placeholder\": \"Name\" }\necho \"Hello $1\"";
+            let sample = "#!/bin/bash\n# @glint.title Say Hello\n# @glint.mode fullOutput\n# @glint.argument1 { \"type\": \"text\", \"placeholder\": \"Name\" }\necho \"Hello $1\"";
             egui::Frame::new().fill(egui::Color32::from_black_alpha(90)).stroke(Stroke::new(1.0, p.line)).corner_radius(8).inner_margin(Margin::same(12)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.add(egui::Label::new(theme::mono(sample, 12.0).color(p.ink)).selectable(true));
             });
             ui.add_space(8.0);
-            theme::para(ui, theme::caption("List mode is Glint's own: the script gets the search text as $1 and prints JSON like [{\"title\": \"…\", \"subtitle\": \"…\", \"icon\": \"🔥\", \"copy\": \"…\", \"open\": \"https://…\"}]."));
-            ui.add_space(6.0);
-            ui.add_space(6.0);
+            theme::para(ui, theme::caption("Modes: fullOutput, compact, silent, inline and list. List mode is Glint's own: the script gets the search text as $1 and prints JSON like [{\"title\": \"…\", \"subtitle\": \"…\", \"icon\": \"flame\", \"copy\": \"…\", \"open\": \"https://…\"}]."));
+            ui.add_space(12.0);
         });
-
     }
 }
 

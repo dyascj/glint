@@ -114,7 +114,7 @@ pub fn modal() -> bool {
     MODAL.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// A standard alert, the same as Slat's update messages. Focus goes back
+/// A standard alert, used for update messages. Focus goes back
 /// to the app you were in afterwards unless the launcher is open.
 pub fn alert(mtm: MainThreadMarker, text: &str) {
     use std::sync::atomic::Ordering;

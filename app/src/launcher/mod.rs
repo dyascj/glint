@@ -42,7 +42,6 @@ use crate::settings::Settings;
 use items::{Run, Section};
 
 pub enum Msg {
-    Toggle,
     Show,
     /// Glint.app was opened (Finder, Dock) while running.
     Activated,
@@ -80,9 +79,10 @@ pub fn send(m: Msg) {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// Keyed by path and id, not position: the lists reload while the form is open.
 pub enum ArgsFor {
-    Script(usize),
-    Quicklink(usize),
+    Script(PathBuf),
+    Quicklink(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -179,7 +179,7 @@ pub struct Runtime {
     pub update_status: Option<String>,
 }
 
-/// Signals the windows send the launcher (Slat's scheme).
+/// Signals the windows send the launcher.
 pub const SIG_SHOW: i32 = libc::SIGUSR1;
 pub const SIG_CHECK_UPDATES: i32 = libc::SIGHUP;
 pub const SIG_INSTALL_UPDATE: i32 = libc::SIGINFO;
@@ -286,8 +286,9 @@ pub fn run() {
     }
 }
 
-fn is_glint(pid: i32) -> bool {
-    Command::new("/bin/ps").args(["-p", &pid.to_string(), "-o", "comm="]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("Glint"))
+/// Whether `pid` is a Glint process (a stale pid may now belong to anything).
+pub fn is_glint(pid: i32) -> bool {
+    Command::new("/bin/ps").args(["-p", &pid.to_string(), "-o", "comm="]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("glint"))
 }
 
 impl Launcher {
@@ -551,9 +552,8 @@ impl Launcher {
             let first = same.next().map(|(i, _)| i);
             if same.next().is_some() { None } else { first }
         });
-        let n = self.sections.iter().map(|s| s.items.len()).sum::<usize>();
-        // Grids (emoji, colors) have no sections; they clamp themselves.
-        let grid = matches!(self.page().view, View::Emoji | View::Colors);
+        // Grids (emoji, colors) have no sections; count their cells instead.
+        let n = if matches!(self.page().view, View::Emoji | View::Colors) { self.grid_len() } else { self.sections.iter().map(|s| s.items.len()).sum() };
         let page = self.page_mut();
         if !same_page {
             // New text: the best match is on top.
@@ -562,9 +562,7 @@ impl Launcher {
         if let Some(i) = found {
             page.selected = i;
         }
-        if !grid {
-            page.selected = page.selected.min(n.saturating_sub(1));
-        }
+        page.selected = page.selected.min(n.saturating_sub(1));
     }
 
     /// File search runs a beat after typing stops, for root and Search Files.
@@ -692,8 +690,8 @@ impl Launcher {
                 self.hud("Copied File");
             }
             Run::Paste(s) => self.paste(&s, now),
-            Run::PasteClip(i) | Run::CopyClip(i) => {
-                let Some(c) = self.clips.get(i) else { return };
+            Run::PasteClip(r) | Run::CopyClip(r) => {
+                let Some(c) = r.find(&self.clips).map(|i| &self.clips[i]) else { return };
                 if c.image.is_some() {
                     let ok = macos::copy_image(std::path::Path::new(&c.text));
                     self.hide(now);
@@ -724,7 +722,7 @@ impl Launcher {
                 if let Some(s) = self.scripts.get(i) {
                     let view = View::Args {
                         title: s.title.clone(),
-                        target: ArgsFor::Script(i),
+                        target: ArgsFor::Script(s.path.clone()),
                         values: vec![String::new(); s.arguments.len()],
                         placeholders: s.arguments.iter().map(|a| if a.optional { format!("{} (optional)", a.placeholder) } else { a.placeholder.clone() }).collect(),
                         secure: s.arguments.iter().map(|a| a.secure).collect(),
@@ -741,7 +739,7 @@ impl Launcher {
                         macos::open(&link.url_for(q.trim()));
                     }
                     _ => {
-                        let view = View::Args { title: link.name.clone(), target: ArgsFor::Quicklink(i), values: vec![String::new()], placeholders: vec!["Query".into()], secure: vec![false], focus: 0 };
+                        let view = View::Args { title: link.name.clone(), target: ArgsFor::Quicklink(link.id()), values: vec![String::new()], placeholders: vec!["Query".into()], secure: vec![false], focus: 0 };
                         self.push(view, String::new());
                     }
                 }
@@ -768,15 +766,15 @@ impl Launcher {
                     });
                 }
             }
-            Run::PinClip(i) => {
-                if let Some(c) = self.clips.get_mut(i) {
+            Run::PinClip(r) => {
+                if let Some(c) = r.find(&self.clips).map(|i| &mut self.clips[i]) {
                     c.pinned = !c.pinned;
                     let _ = prefs::save(data::CLIPBOARD, &self.clips);
                     self.epoch += 1;
                 }
             }
-            Run::DeleteClip(i) => {
-                if i < self.clips.len() {
+            Run::DeleteClip(r) => {
+                if let Some(i) = r.find(&self.clips) {
                     self.clips.remove(i);
                     let _ = prefs::save(data::CLIPBOARD, &self.clips);
                     data::prune_clip_images(&self.clips);
@@ -886,19 +884,15 @@ impl Launcher {
     }
 
     pub fn run_cmd(&mut self, c: Cmd, now: f64) {
-        let carry = || String::new();
         let root_query = if self.stack.len() == 1 { self.stack[0].query.trim().to_string() } else { String::new() };
-        if let Some(prompt) = commands::def(c).confirm
-            && self.confirm != Some(c)
-        {
-            let _ = prompt;
+        if commands::def(c).confirm.is_some() && self.confirm != Some(c) {
             self.confirm = Some(c);
             return;
         }
         self.confirm = None;
         match c {
             Cmd::SearchFiles => {
-                let q = if commands::def(Cmd::SearchFiles).title.to_lowercase().starts_with(&root_query.to_lowercase()) { carry() } else { root_query };
+                let q = if commands::def(Cmd::SearchFiles).title.to_lowercase().starts_with(&root_query.to_lowercase()) { String::new() } else { root_query };
                 self.push(View::Files, q);
             }
             Cmd::ClipboardHistory => self.push(View::Clipboard, String::new()),
@@ -930,7 +924,7 @@ impl Launcher {
                 self.push(View::Windows { items: (!trusted).then(Vec::new), token }, String::new());
             }
             Cmd::SearchEmoji => {
-                let q = if "search emoji & symbols".starts_with(&root_query.to_lowercase()) || "emoji".starts_with(&root_query.to_lowercase()) { carry() } else { root_query };
+                let q = if "search emoji & symbols".starts_with(&root_query.to_lowercase()) || "emoji".starts_with(&root_query.to_lowercase()) { String::new() } else { root_query };
                 self.push(View::Emoji, q);
             }
             Cmd::SavedColors => self.push(View::Colors, String::new()),
@@ -1124,7 +1118,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
             if let Some(s) = self.scripts.iter().find(|s| &s.path == script).cloned() {
                 std::thread::spawn(move || {
                     let out = scripts::run(&s, &[q], Duration::from_secs(15));
-                    let parsed = if out.ok { scripts::parse_list(&out.text) } else { Err(out.text) };
+                    let parsed = if out.ok { scripts::parse_list(&out.stdout) } else { Err(out.text) };
                     send(Msg::ListDone(next, parsed));
                 });
             }
@@ -1188,6 +1182,8 @@ tell application "System Events" to tell appearance preferences to get dark mode
                 } else {
                     let slug: String = title.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { '-' }).collect();
                     let slug = slug.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-");
+                    // A title of only symbols ("🚀") would make a hidden ".sh".
+                    let slug = if slug.is_empty() { "extension".to_string() } else { slug };
                     let path = paths::extensions_dir().join(format!("{slug}.sh"));
                     if path.exists() {
                         Err(format!("{} already exists.", paths::tilde(&path)))
@@ -1226,7 +1222,12 @@ tell application "System Events" to tell appearance preferences to get dark mode
         let View::Args { target, values, .. } = &self.page().view else { return };
         let (target, values) = (target.clone(), values.clone());
         match target {
-            ArgsFor::Script(i) => {
+            ArgsFor::Script(path) => {
+                let Some(i) = self.scripts.iter().position(|s| s.path == path) else {
+                    self.pop();
+                    self.toast("That extension is gone", false, now);
+                    return;
+                };
                 let required: Vec<bool> = self.scripts.get(i).map(|s| s.arguments.iter().map(|a| !a.optional).collect()).unwrap_or_default();
                 if values.iter().zip(&required).any(|(v, r)| *r && v.trim().is_empty()) {
                     self.toast("Fill in the required fields", false, now);
@@ -1235,10 +1236,11 @@ tell application "System Events" to tell appearance preferences to get dark mode
                 self.pop();
                 self.run_script(i, values, now);
             }
-            ArgsFor::Quicklink(i) => {
+            ArgsFor::Quicklink(id) => {
                 if values[0].trim().is_empty() {
                     return;
                 }
+                let Some(i) = self.quicklinks.iter().position(|q| q.id() == id) else { return };
                 self.run(Run::Quicklink(i, Some(values[0].clone())), "", now);
             }
         }
@@ -1360,7 +1362,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
             "update" => self.install_update(),
             "check" => updates::check_in_background(),
             "feedback" => {
-                let _ = macos::open(&format!("{}/issues/new", paths::REPO_URL));
+                macos::open(&format!("{}/issues/new", paths::REPO_URL));
             }
             "quit" => quit(),
             other => self.run_id(other, now),
@@ -1381,7 +1383,10 @@ tell application "System Events" to tell appearance preferences to get dark mode
                 return;
             }
             let _ = child.kill();
+            let _ = child.wait();
         }
+        // Reap windows that closed on their own.
+        self.windows.retain(|_, c| c.try_wait().is_ok_and(|s| s.is_none()));
         let Ok(exe) = std::env::current_exe() else { return };
         match Command::new(exe).arg("ui").arg(kind).args(section).spawn() {
             Ok(child) => {
@@ -1419,7 +1424,6 @@ tell application "System Events" to tell appearance preferences to get dark mode
 
     fn handle(&mut self, m: Msg, now: f64) {
         match m {
-            Msg::Toggle => self.toggle(now),
             Msg::Show => self.show(now),
             // The launch itself activates the app; only later activations mean "open".
             Msg::Activated if now > 2.0 && !self.shown => self.show(now),
@@ -1511,7 +1515,7 @@ tell application "System Events" to tell appearance preferences to get dark mode
             }
             Msg::UpdateDone(r, result) => match result {
                 Ok(()) => {
-                    // Close Settings/Onboarding first (Slat does the same), so the
+                    // Close Settings/Onboarding first, so the
                     // relaunch starts the new launcher instead of focusing a leftover window.
                     for child in self.windows.values_mut() {
                         let _ = child.kill();
@@ -1711,8 +1715,11 @@ fn spawn_watchers() {
                     return;
                 }
                 let app = || macos::frontmost().map(|(n, _)| n).unwrap_or_default();
+                // A huge copy (a whole log file) would be rewritten to disk and
+                // searched on every keystroke, so text clips are capped at 1 MB.
                 if let Some((text, file)) = macos::read_clipboard()
                     && !text.trim().is_empty()
+                    && text.len() <= 1_000_000
                 {
                     send(Msg::Clip(Clip { text, file, at: data::now(), pinned: false, app: app(), image: None }));
                 } else if let Some((png, size)) = macos::read_clipboard_image()

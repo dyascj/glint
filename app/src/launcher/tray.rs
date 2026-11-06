@@ -15,31 +15,28 @@ const SCALE: f64 = 2.0;
 const W: f64 = 20.0;
 const H: f64 = 22.0;
 
-fn in_pill(px: f64, py: f64, (x, y, w, h): (f64, f64, f64, f64)) -> bool {
-    let r = h / 2.0;
+/// Inside a rounded rect `(x, y, w, h)` with corner radius `r`.
+fn in_rounded(px: f64, py: f64, (x, y, w, h): (f64, f64, f64, f64), r: f64) -> bool {
     let cx = px.clamp(x + r, x + w - r);
-    let (dx, dy) = (px - cx, py - (y + r));
-    dx * dx + dy * dy <= r * r
+    let cy = py.clamp(y + r, y + h - r);
+    let (dx, dy) = (px - cx, py - cy);
+    px >= x && px <= x + w && py >= y && py <= y + h && dx * dx + dy * dy <= r * r
 }
 
-/// The mark at menu bar size, same proportions as the app icon: search bar
-/// (outline), selected row (solid), a shorter row (outline), and the glint.
+/// The mark at menu bar size, as in the app icon: a key with the glint cut out
+/// of its top face, and a thin gap between the face and the skirt below.
 fn covered(px: f64, py: f64) -> bool {
-    const STROKE: f64 = 1.1;
-    let (h, top) = (13.0, 4.5);
-    let r = 0.2235 * h;
-    let w = (W - 1.0 - r) / 0.93;
-    let rows = [(0.0, 0.28, 1.0, false), (0.37, 0.65, 0.72, true), (0.74, 1.0, 0.48, false)];
-    for (y0, y1, frac, solid) in rows {
-        let outer = (0.5, top + y0 * h, frac * w, (y1 - y0) * h);
-        let inner = (outer.0 + STROKE, outer.1 + STROKE, outer.2 - 2.0 * STROKE, outer.3 - 2.0 * STROKE);
-        if in_pill(px, py, outer) && (solid || !in_pill(px, py, inner)) {
-            return true;
-        }
-    }
+    const S: f64 = 15.0;
+    let (x, y) = ((W - S) / 2.0, (H - S) / 2.0);
+    let face = (x + 0.1 * S, y, 0.8 * S, 0.78 * S);
+    let in_face = in_rounded(px, py, face, 0.16 * S);
+    let gap = (face.0 - 1.0, face.1 - 1.0, face.2 + 2.0, face.3 + 2.0);
+    let in_skirt = in_rounded(px, py, (x, y + 0.08 * S, S, 0.92 * S), 0.2 * S) && !in_rounded(px, py, gap, 0.16 * S + 1.0);
     // Astroid glint: |x|^(2/3) + |y|^(2/3) <= r^(2/3).
-    let (dx, dy) = ((px - (0.5 + 0.93 * w)).abs(), (py - (top + 0.51 * h)).abs());
-    dx.powf(2.0 / 3.0) + dy.powf(2.0 / 3.0) <= r.powf(2.0 / 3.0)
+    let r = 0.3 * face.2;
+    let (dx, dy) = ((px - (face.0 + face.2 / 2.0)).abs(), (py - (face.1 + face.3 / 2.0)).abs());
+    let in_glint = dx.powf(2.0 / 3.0) + dy.powf(2.0 / 3.0) <= r.powf(2.0 / 3.0);
+    (in_face && !in_glint) || in_skirt
 }
 
 pub fn rgba() -> (Vec<u8>, u32, u32) {
@@ -105,7 +102,7 @@ pub fn menu(l: &Launcher) -> Menu {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn glyph_has_rows_and_a_glint() {
+    fn glyph_is_a_key_with_a_glint() {
         let (px, w, h) = super::rgba();
         assert_eq!((w, h), (40, 44));
         let alpha = |x: u32, y: u32| px[((y * w + x) * 4 + 3) as usize];

@@ -45,13 +45,18 @@ impl Rgb {
             ColorFormat::Rgb => format!("rgb({r}, {g}, {b})"),
             ColorFormat::Hsl => {
                 let (h, s, l) = self.hsl();
-                format!("hsl({}, {}%, {}%)", h.round(), (s * 100.0).round(), (l * 100.0).round())
+                let (h, s, l) = (h.round(), (s * 100.0).round(), (l * 100.0).round());
+                if self.a < 1.0 { format!("hsla({h}, {s}%, {l}%, {})", trim(self.a, 2)) } else { format!("hsl({h}, {s}%, {l}%)") }
             }
             ColorFormat::Oklch => {
                 let (l, c, h) = self.oklch();
-                format!("oklch({}% {} {})", trim(l * 100.0, 1), trim(c, 3), trim(h, 1))
+                let alpha = if self.a < 1.0 { format!(" / {}", trim(self.a, 2)) } else { String::new() };
+                format!("oklch({}% {} {}{alpha})", trim(l * 100.0, 1), trim(c, 3), trim(h, 1))
             }
-            ColorFormat::Swift => format!("Color(red: {}, green: {}, blue: {})", trim(self.r, 3), trim(self.g, 3), trim(self.b, 3)),
+            ColorFormat::Swift => {
+                let opacity = if self.a < 1.0 { format!(", opacity: {}", trim(self.a, 2)) } else { String::new() };
+                format!("Color(red: {}, green: {}, blue: {}{opacity})", trim(self.r, 3), trim(self.g, 3), trim(self.b, 3))
+            }
         }
     }
 
@@ -192,7 +197,9 @@ pub fn parse(s: &str) -> Option<Rgb> {
         "oklch" if parts.len() >= 3 => {
             let l = num(parts[0], 1.0)?;
             let l = if l > 1.0 { l / 100.0 } else { l };
-            let mut c = Rgb::from_oklch(l, num(parts[1], 1.0)?, parts[2].trim_end_matches("deg").parse().ok()?);
+            // CSS: 100% chroma is 0.4.
+            let chroma = if parts[1].ends_with('%') { num(parts[1], 1.0)? * 0.4 } else { num(parts[1], 1.0)? };
+            let mut c = Rgb::from_oklch(l, chroma, parts[2].trim_end_matches("deg").parse().ok()?);
             c.a = alpha(3)?;
             Some(c)
         }
@@ -247,6 +254,11 @@ mod tests {
         assert_eq!(parse(&ok).unwrap().hex(), "#3B82F6");
         assert!(parse(&c.format(ColorFormat::Hsl)).is_some());
         assert_eq!(Rgb::new(1.0, 1.0, 1.0).format(ColorFormat::Swift), "Color(red: 1, green: 1, blue: 1)");
+        let half = parse("#3B82F680").unwrap();
+        assert_eq!(half.format(ColorFormat::Hsl), "hsla(217, 91%, 60%, 0.5)");
+        assert_eq!(parse(&half.format(ColorFormat::Oklch)).unwrap().hex(), "#3B82F680", "alpha survives OKLCH");
+        assert!(half.format(ColorFormat::Swift).ends_with(", opacity: 0.5)"));
+        assert_eq!(parse("oklch(70% 50% 200)").unwrap().hex(), parse("oklch(70% 0.2 200)").unwrap().hex(), "100% chroma is 0.4");
     }
 
     #[test]
