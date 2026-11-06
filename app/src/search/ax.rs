@@ -228,7 +228,8 @@ pub struct MenuItem {
     pub elem: Elem,
 }
 
-const MENU_ATTRS: [&str; 7] = ["AXRole", "AXTitle", "AXEnabled", "AXChildren", "AXMenuItemCmdChar", "AXMenuItemCmdModifiers", "AXMenuItemCmdGlyph"];
+const MENU_ATTRS: [&str; 7] =
+    ["AXRole", "AXTitle", "AXEnabled", "AXChildren", "AXMenuItemCmdChar", "AXMenuItemCmdModifiers", "AXMenuItemCmdGlyph"];
 const MAX_ITEMS: usize = 4000;
 
 /// Every enabled item in `pid`'s menu bar, in menu order (the Apple menu
@@ -408,7 +409,14 @@ fn app_windows(a: &Running) -> Vec<Window> {
                 "" => a.name.clone(),
                 t => t.to_string(),
             };
-            Some(Window { title, app: a.name.clone(), pid: a.pid, app_path: a.path.clone(), minimized: minimized.bool().unwrap_or(false), elem: w })
+            Some(Window {
+                title,
+                app: a.name.clone(),
+                pid: a.pid,
+                app_path: a.path.clone(),
+                minimized: minimized.bool().unwrap_or(false),
+                elem: w,
+            })
         })
         .collect()
 }

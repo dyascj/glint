@@ -133,7 +133,8 @@ fn check() -> Result<Option<Release>, String> {
     if !newer(tag, CURRENT) {
         return Ok(None);
     }
-    let url_of = |name: &str| v["assets"].as_array()?.iter().find(|x| x["name"] == name)?["browser_download_url"].as_str().map(String::from);
+    let url_of =
+        |name: &str| v["assets"].as_array()?.iter().find(|x| x["name"] == name)?["browser_download_url"].as_str().map(String::from);
     Ok(match (url_of(ASSET), url_of(&format!("{ASSET}.minisig"))) {
         (Some(url), Some(sig)) => Some(Release { version, url, sig }),
         _ => None,

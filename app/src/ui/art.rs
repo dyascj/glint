@@ -60,10 +60,26 @@ enum Glyph {
 }
 
 const SCENES: [Scene; 4] = [
-    Scene { query: "saf", rows: &[("Safari", "Application", Glyph::App(0x5aa9f7)), ("Saved Colors", "Command", Glyph::Cmd), ("Search Files", "Command", Glyph::Cmd)], calc: None },
+    Scene {
+        query: "saf",
+        rows: &[
+            ("Safari", "Application", Glyph::App(0x5aa9f7)),
+            ("Saved Colors", "Command", Glyph::Cmd),
+            ("Search Files", "Command", Glyph::Cmd),
+        ],
+        calc: None,
+    },
     Scene { query: "24px to rem", rows: &[], calc: Some(("24px to rem", "1.5 rem")) },
     Scene { query: "#f3d694", rows: &[("#F3D694", "Color", Glyph::Swatch(0xf3d694)), ("Pick Color", "Command", Glyph::Cmd)], calc: None },
-    Scene { query: "invoice", rows: &[("invoice-oct.pdf", "~/Documents", Glyph::Doc), ("invoices", "~/Desktop", Glyph::Doc), ("Invoice Template.pages", "~/Documents", Glyph::Doc)], calc: None },
+    Scene {
+        query: "invoice",
+        rows: &[
+            ("invoice-oct.pdf", "~/Documents", Glyph::Doc),
+            ("invoices", "~/Desktop", Glyph::Doc),
+            ("Invoice Template.pages", "~/Documents", Glyph::Doc),
+        ],
+        calc: None,
+    },
 ];
 
 /// A small launcher typing a few searches in a loop (`t` in seconds).

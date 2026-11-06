@@ -29,7 +29,9 @@ pub fn configure(mtm: MainThreadMarker) {
     w.setBackgroundColor(Some(&NSColor::clearColor()));
     w.setLevel(NSFloatingWindowLevel);
     w.setCollectionBehavior(
-        NSWindowCollectionBehavior::CanJoinAllSpaces | NSWindowCollectionBehavior::FullScreenAuxiliary | NSWindowCollectionBehavior::IgnoresCycle,
+        NSWindowCollectionBehavior::CanJoinAllSpaces
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::IgnoresCycle,
     );
     w.setHidesOnDeactivate(false);
     // eframe shows the window after its first frame; keep that frame invisible.
@@ -51,7 +53,10 @@ pub fn blur(window: &NSWindow, radius: u32) {
     type SetBlur = unsafe extern "C" fn(i32, u32, i32) -> i32;
     // SAFETY: dlsym lookups of C functions with the signatures above.
     let (conn, set_blur) = unsafe {
-        (libc::dlsym(libc::RTLD_DEFAULT, c"CGSMainConnectionID".as_ptr()), libc::dlsym(libc::RTLD_DEFAULT, c"CGSSetWindowBackgroundBlurRadius".as_ptr()))
+        (
+            libc::dlsym(libc::RTLD_DEFAULT, c"CGSMainConnectionID".as_ptr()),
+            libc::dlsym(libc::RTLD_DEFAULT, c"CGSSetWindowBackgroundBlurRadius".as_ptr()),
+        )
     };
     if !conn.is_null() && !set_blur.is_null() {
         // SAFETY: both symbols exist and match the declared signatures.
@@ -67,10 +72,13 @@ pub fn blur(window: &NSWindow, radius: u32) {
 fn active_screen(mtm: MainThreadMarker) -> Option<Retained<NSScreen>> {
     let m = NSEvent::mouseLocation();
     let screens = NSScreen::screens(mtm);
-    screens.iter().find(|s| {
-        let f = s.frame();
-        m.x >= f.origin.x && m.x <= f.origin.x + f.size.width && m.y >= f.origin.y && m.y <= f.origin.y + f.size.height
-    }).or_else(|| NSScreen::mainScreen(mtm))
+    screens
+        .iter()
+        .find(|s| {
+            let f = s.frame();
+            m.x >= f.origin.x && m.x <= f.origin.x + f.size.width && m.y >= f.origin.y && m.y <= f.origin.y + f.size.height
+        })
+        .or_else(|| NSScreen::mainScreen(mtm))
 }
 
 pub fn is_shown(mtm: MainThreadMarker) -> bool {
@@ -198,7 +206,9 @@ pub fn hud(mtm: MainThreadMarker, text: &str) {
         if let Some(rep) = view.bitmapImageRepForCachingDisplayInRect(b) {
             view.cacheDisplayInRect_toBitmapImageRep(b, &rep);
             // SAFETY: an empty properties dictionary is valid for PNG output.
-            let png = unsafe { rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new()) };
+            let png = unsafe {
+                rep.representationUsingType_properties(objc2_app_kit::NSBitmapImageFileType::PNG, &objc2_foundation::NSDictionary::new())
+            };
             if let Some(png) = png {
                 let _ = std::fs::write(path, png.to_vec());
             }

@@ -53,7 +53,10 @@ const ALIASES: &[(&str, &str, &str)] = &[
 pub fn evaluate(q: &str) -> Option<Answer> {
     let q = q.trim();
     // "time in tokyo", "now in tokyo", "tokyo time"
-    let here = ["time in ", "current time in ", "now in ", "what time is it in "].iter().find_map(|p| q.strip_prefix(p)).or_else(|| q.strip_suffix(" time"));
+    let here = ["time in ", "current time in ", "now in ", "what time is it in "]
+        .iter()
+        .find_map(|p| q.strip_prefix(p))
+        .or_else(|| q.strip_suffix(" time"));
     if let Some(place) = here {
         let (name, tz) = zone(place)?;
         return Some(answer(now(), &name, &tz));

@@ -108,7 +108,13 @@ mod tests {
         let alpha = |x: u32, y: u32| px[((y * w + x) * 4 + 3) as usize];
         if std::env::var_os("GLINT_PRINT_GLYPH").is_some() {
             for y in 0..h {
-                let line: String = (0..w).map(|x| match alpha(x, y) { 0..=40 => ' ', 41..=160 => '+', _ => '#' }).collect();
+                let line: String = (0..w)
+                    .map(|x| match alpha(x, y) {
+                        0..=40 => ' ',
+                        41..=160 => '+',
+                        _ => '#',
+                    })
+                    .collect();
                 println!("{line}");
             }
         }

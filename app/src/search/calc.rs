@@ -65,7 +65,9 @@ fn lex(s: &str) -> Option<Vec<Tok>> {
             let in_args = parens.last() == Some(&true);
             let grouping = |i: usize| {
                 !in_args
-                    && c[i] == ',' && c.get(i + 1..i + 4).is_some_and(|w| w.iter().all(char::is_ascii_digit)) && c.get(i + 4).is_none_or(|d| !d.is_ascii_digit())
+                    && c[i] == ','
+                    && c.get(i + 1..i + 4).is_some_and(|w| w.iter().all(char::is_ascii_digit))
+                    && c.get(i + 4).is_none_or(|d| !d.is_ascii_digit())
             };
             while i < c.len() && (c[i].is_ascii_digit() || c[i] == '.' || grouping(i)) {
                 i += 1;

@@ -66,7 +66,8 @@ pub struct SettingsApp {
 }
 
 fn entries() -> Vec<Entry> {
-    let mut v: Vec<Entry> = commands::ALL.iter().map(|d| Entry { id: d.id(), title: d.title.into(), kind: "Command", icon: Img::Symbol(d.symbol) }).collect();
+    let mut v: Vec<Entry> =
+        commands::ALL.iter().map(|d| Entry { id: d.id(), title: d.title.into(), kind: "Command", icon: Img::Symbol(d.symbol) }).collect();
     for s in scripts::scan() {
         let icon = macos::icon_named(s.icon.as_deref(), "terminal");
         v.push(Entry { id: s.id(), title: s.title.clone(), kind: "Extension", icon });
@@ -76,7 +77,12 @@ fn entries() -> Vec<Entry> {
         v.push(Entry { id: q.id(), title: q.name.clone(), kind: "Quicklink", icon });
     }
     for a in apps::scan() {
-        v.push(Entry { id: format!("app:{}", a.path.display()), title: a.name.clone(), kind: "Application", icon: Img::File(a.path.clone()) });
+        v.push(Entry {
+            id: format!("app:{}", a.path.display()),
+            title: a.name.clone(),
+            kind: "Application",
+            icon: Img::File(a.path.clone()),
+        });
     }
     v
 }
@@ -194,10 +200,22 @@ impl SettingsApp {
             let selected = self.page == page;
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
             let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-            let fill = if selected { p.knob } else if resp.hovered() { p.chip } else { egui::Color32::TRANSPARENT };
+            let fill = if selected {
+                p.knob
+            } else if resp.hovered() {
+                p.chip
+            } else {
+                egui::Color32::TRANSPARENT
+            };
             ui.painter().rect_filled(rect, 6, fill);
             let g = theme::galley(ui, theme::text(title.to_lowercase(), 13.0, theme::REGULAR), f32::INFINITY);
-            let color = if selected { p.bright } else if resp.hovered() { p.ink } else { p.muted };
+            let color = if selected {
+                p.bright
+            } else if resp.hovered() {
+                p.ink
+            } else {
+                p.muted
+            };
             ui.painter().galley(pos2(rect.left() + 10.0, rect.center().y - g.size().y / 2.0), g, color);
             if page == Page::General && self.hotkey_error.is_some() {
                 ui.painter().circle_filled(pos2(rect.right() - 14.0, rect.center().y), 3.5, p.warning);
@@ -240,7 +258,11 @@ impl SettingsApp {
             });
             hairline(ui);
             let detail = if on_cmd_space {
-                if self.spotlight_on { "Spotlight's ⌘ Space is still on. Undo, or turn it off in Keyboard Shortcuts." } else { "Spotlight's shortcut is off, so ⌘ Space opens Glint." }
+                if self.spotlight_on {
+                    "Spotlight's ⌘ Space is still on. Undo, or turn it off in Keyboard Shortcuts."
+                } else {
+                    "Spotlight's shortcut is off, so ⌘ Space opens Glint."
+                }
             } else {
                 "Turns off Spotlight's ⌘ Space shortcut and gives it to Glint. You can undo this."
             };
@@ -287,7 +309,12 @@ impl SettingsApp {
                 }
             });
             if self.s.start_at_login && self.login == LoginStatus::RequiresApproval {
-                if theme::callout(ui, "Approval needed", &format!("Allow {APP_NAME} in System Settings › General › Login Items."), Some("Open Login Items")) {
+                if theme::callout(
+                    ui,
+                    "Approval needed",
+                    &format!("Allow {APP_NAME} in System Settings › General › Login Items."),
+                    Some("Open Login Items"),
+                ) {
                     macos::open(LOGIN_ITEMS_URL);
                 }
                 ui.add_space(14.0);
@@ -301,13 +328,21 @@ impl SettingsApp {
         section(ui, "Permissions");
         card(ui, |ui| {
             let (mark, label) = if self.ax { (Mark::On, "Granted") } else { (Mark::Off, "Not granted") };
-            row(ui, "Accessibility", Some("Pastes clipboard items, snippets and emoji into the app you're using, and powers Search Menu Items and Switch Windows"), None, |ui| {
-                if !self.ax && theme::small_button(ui, "Grant Access", Kind::Primary).clicked() {
-                    macos::ax_prompt();
-                    macos::open(macos::ACCESSIBILITY_URL);
-                }
-                theme::pill(ui, mark, label);
-            });
+            row(
+                ui,
+                "Accessibility",
+                Some(
+                    "Pastes clipboard items, snippets and emoji into the app you're using, and powers Search Menu Items and Switch Windows",
+                ),
+                None,
+                |ui| {
+                    if !self.ax && theme::small_button(ui, "Grant Access", Kind::Primary).clicked() {
+                        macos::ax_prompt();
+                        macos::open(macos::ACCESSIBILITY_URL);
+                    }
+                    theme::pill(ui, mark, label);
+                },
+            );
         });
     }
 
@@ -340,14 +375,24 @@ impl SettingsApp {
     fn commands(&mut self, ui: &mut Ui) {
         let p = theme::pal();
         ui.add_space(14.0);
-        egui::Frame::new().fill(p.raised).stroke(Stroke::new(1.0, p.line)).corner_radius(8).inner_margin(Margin::symmetric(10, 7)).show(ui, |ui| {
-            ui.add(TextEdit::singleline(&mut self.filter).frame(egui::Frame::NONE).desired_width(f32::INFINITY).hint_text(theme::text("Filter commands, extensions and apps…", 13.0, theme::REGULAR).color(p.dim)));
-        });
+        egui::Frame::new().fill(p.raised).stroke(Stroke::new(1.0, p.line)).corner_radius(8).inner_margin(Margin::symmetric(10, 7)).show(
+            ui,
+            |ui| {
+                ui.add(
+                    TextEdit::singleline(&mut self.filter)
+                        .frame(egui::Frame::NONE)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(theme::text("Filter commands, extensions and apps…", 13.0, theme::REGULAR).color(p.dim)),
+                );
+            },
+        );
         ui.add_space(4.0);
         ui.label(theme::caption("Type an alias in the search bar to jump straight to a command. Hotkeys work from anywhere."));
         let q = self.filter.trim().to_lowercase();
         for kind in ["Command", "Extension", "Quicklink", "Application"] {
-            let list: Vec<usize> = (0..self.entries.len()).filter(|&i| self.entries[i].kind == kind && (q.is_empty() || self.entries[i].title.to_lowercase().contains(&q))).collect();
+            let list: Vec<usize> = (0..self.entries.len())
+                .filter(|&i| self.entries[i].kind == kind && (q.is_empty() || self.entries[i].title.to_lowercase().contains(&q)))
+                .collect();
             if list.is_empty() {
                 continue;
             }
@@ -369,7 +414,10 @@ impl SettingsApp {
                         }
                         ui.add_space(4.0);
                         let enabled = !self.s.disabled.contains(&id);
-                        ui.add(egui::Label::new(theme::text(&title, 13.0, theme::REGULAR).color(if enabled { p.ink } else { p.dim })).truncate());
+                        ui.add(
+                            egui::Label::new(theme::text(&title, 13.0, theme::REGULAR).color(if enabled { p.ink } else { p.dim }))
+                                .truncate(),
+                        );
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             let mut on = enabled;
                             if theme::toggle(ui, &mut on).changed() {
@@ -389,7 +437,10 @@ impl SettingsApp {
                             let mut alias = self.s.aliases.get(&id).cloned().unwrap_or_default();
                             let resp = ui.add_sized(
                                 vec2(84.0, 26.0),
-                                TextEdit::singleline(&mut alias).font(egui::FontId::proportional(12.5)).margin(Margin::symmetric(8, 4)).hint_text(theme::text("alias", 12.0, theme::REGULAR).color(p.faint)),
+                                TextEdit::singleline(&mut alias)
+                                    .font(egui::FontId::proportional(12.5))
+                                    .margin(Margin::symmetric(8, 4))
+                                    .hint_text(theme::text("alias", 12.0, theme::REGULAR).color(p.faint)),
                             );
                             if resp.changed() {
                                 let a = alias.trim().to_lowercase();
@@ -417,9 +468,19 @@ impl SettingsApp {
                 theme::segmented(ui, &mut self.s.clipboard_limit, &[(100, "100"), (300, "300"), (1000, "1,000")]);
             });
             hairline(ui);
-            row(ui, "Paste when chosen", Some(if self.ax { "Return pastes into the app you came from; ⌘ Return copies" } else { "Needs Accessibility; until then Return copies" }), None, |ui| {
-                theme::toggle(ui, &mut self.s.paste_on_select);
-            });
+            row(
+                ui,
+                "Paste when chosen",
+                Some(if self.ax {
+                    "Return pastes into the app you came from; ⌘ Return copies"
+                } else {
+                    "Needs Accessibility; until then Return copies"
+                }),
+                None,
+                |ui| {
+                    theme::toggle(ui, &mut self.s.paste_on_select);
+                },
+            );
         });
         ui.add_space(8.0);
         ui.label(theme::caption("Password managers mark what they copy as private; Glint never saves those."));
@@ -471,7 +532,9 @@ impl SettingsApp {
             });
         });
         ui.add_space(8.0);
-        ui.label(theme::caption("Type #hex, rgb(), hsl() or oklch() in the search bar to convert a color. ⌘T on any color shows its shades."));
+        ui.label(theme::caption(
+            "Type #hex, rgb(), hsl() or oklch() in the search bar to convert a color. ⌘T on any color shows its shades.",
+        ));
     }
 
     fn extensions(&mut self, ui: &mut Ui) {
@@ -531,12 +594,22 @@ impl SettingsApp {
             theme::para(ui, theme::body("Any language works. Put metadata in comments at the top, make the file executable, and Glint picks it up within a second.").weak());
             ui.add_space(8.0);
             let sample = "#!/bin/bash\n# @glint.title Say Hello\n# @glint.mode fullOutput\n# @glint.argument1 { \"type\": \"text\", \"placeholder\": \"Name\" }\necho \"Hello $1\"";
-            egui::Frame::new().fill(egui::Color32::from_black_alpha(90)).stroke(Stroke::new(1.0, p.line)).corner_radius(8).inner_margin(Margin::same(12)).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.add(egui::Label::new(theme::mono(sample, 12.0).color(p.ink)).selectable(true));
-            });
+            egui::Frame::new()
+                .fill(egui::Color32::from_black_alpha(90))
+                .stroke(Stroke::new(1.0, p.line))
+                .corner_radius(8)
+                .inner_margin(Margin::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add(egui::Label::new(theme::mono(sample, 12.0).color(p.ink)).selectable(true));
+                });
             ui.add_space(8.0);
-            theme::para(ui, theme::caption("Modes: fullOutput, compact, silent, inline and list. List mode is Glint's own: the script gets the search text as $1 and prints JSON like [{\"title\": \"…\", \"subtitle\": \"…\", \"icon\": \"flame\", \"copy\": \"…\", \"open\": \"https://…\"}]."));
+            theme::para(
+                ui,
+                theme::caption(
+                    "Modes: fullOutput, compact, silent, inline and list. List mode is Glint's own: the script gets the search text as $1 and prints JSON like [{\"title\": \"…\", \"subtitle\": \"…\", \"icon\": \"flame\", \"copy\": \"…\", \"open\": \"https://…\"}].",
+                ),
+            );
             ui.add_space(12.0);
         });
     }

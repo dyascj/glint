@@ -179,7 +179,11 @@ pub fn parse(s: &str) -> Option<Rgb> {
     let (name, args) = s.strip_suffix(')')?.split_once('(')?;
     let parts: Vec<&str> = args.split([',', ' ', '/']).map(str::trim).filter(|p| !p.is_empty()).collect();
     let num = |p: &str, scale: f32| -> Option<f32> {
-        if let Some(pct) = p.strip_suffix('%') { pct.parse::<f32>().ok().map(|v| v / 100.0) } else { p.trim_end_matches("deg").parse::<f32>().ok().map(|v| v / scale) }
+        if let Some(pct) = p.strip_suffix('%') {
+            pct.parse::<f32>().ok().map(|v| v / 100.0)
+        } else {
+            p.trim_end_matches("deg").parse::<f32>().ok().map(|v| v / scale)
+        }
     };
     let alpha = |i: usize| parts.get(i).map_or(Some(1.0), |p| num(p, 1.0));
     match name.trim() {

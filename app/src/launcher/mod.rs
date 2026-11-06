@@ -103,7 +103,8 @@ pub struct Form {
     pub error: Option<String>,
 }
 
-pub const EXTENSION_MODES: [(&str, &str); 4] = [("fullOutput", "Full output"), ("list", "List"), ("compact", "Compact"), ("silent", "Silent")];
+pub const EXTENSION_MODES: [(&str, &str); 4] =
+    [("fullOutput", "Full output"), ("list", "List"), ("compact", "Compact"), ("silent", "Silent")];
 
 #[derive(Clone, Debug)]
 pub enum View {
@@ -119,12 +120,40 @@ pub enum View {
     Processes,
     Ramp(Rgb),
     /// Extension views hold the script's path; indices shift when the folder reloads.
-    Output { title: String, text: Option<String>, ok: bool, rerun: (PathBuf, Vec<String>), token: u64 },
-    List { script: PathBuf, items: Vec<ListItem>, error: Option<String>, token: u64, asked: Option<String>, due: Option<f64> },
+    Output {
+        title: String,
+        text: Option<String>,
+        ok: bool,
+        rerun: (PathBuf, Vec<String>),
+        token: u64,
+    },
+    List {
+        script: PathBuf,
+        items: Vec<ListItem>,
+        error: Option<String>,
+        token: u64,
+        asked: Option<String>,
+        due: Option<f64>,
+    },
     /// The front app's menu bar; None while it's being read.
-    Menus { app: String, items: Option<Vec<MenuItem>>, error: Option<String>, token: u64 },
-    Windows { items: Option<Vec<Window>>, token: u64 },
-    Args { title: String, target: ArgsFor, values: Vec<String>, placeholders: Vec<String>, secure: Vec<bool>, focus: usize },
+    Menus {
+        app: String,
+        items: Option<Vec<MenuItem>>,
+        error: Option<String>,
+        token: u64,
+    },
+    Windows {
+        items: Option<Vec<Window>>,
+        token: u64,
+    },
+    Args {
+        title: String,
+        target: ArgsFor,
+        values: Vec<String>,
+        placeholders: Vec<String>,
+        secure: Vec<bool>,
+        focus: usize,
+    },
     Form(Form),
 }
 
@@ -288,7 +317,10 @@ pub fn run() {
 
 /// Whether `pid` is a Glint process (a stale pid may now belong to anything).
 pub fn is_glint(pid: i32) -> bool {
-    Command::new("/bin/ps").args(["-p", &pid.to_string(), "-o", "comm="]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("glint"))
+    Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).to_lowercase().contains("glint"))
 }
 
 impl Launcher {
@@ -553,7 +585,11 @@ impl Launcher {
             if same.next().is_some() { None } else { first }
         });
         // Grids (emoji, colors) have no sections; count their cells instead.
-        let n = if matches!(self.page().view, View::Emoji | View::Colors) { self.grid_len() } else { self.sections.iter().map(|s| s.items.len()).sum() };
+        let n = if matches!(self.page().view, View::Emoji | View::Colors) {
+            self.grid_len()
+        } else {
+            self.sections.iter().map(|s| s.items.len()).sum()
+        };
         let page = self.page_mut();
         if !same_page {
             // New text: the best match is on top.
@@ -724,7 +760,11 @@ impl Launcher {
                         title: s.title.clone(),
                         target: ArgsFor::Script(s.path.clone()),
                         values: vec![String::new(); s.arguments.len()],
-                        placeholders: s.arguments.iter().map(|a| if a.optional { format!("{} (optional)", a.placeholder) } else { a.placeholder.clone() }).collect(),
+                        placeholders: s
+                            .arguments
+                            .iter()
+                            .map(|a| if a.optional { format!("{} (optional)", a.placeholder) } else { a.placeholder.clone() })
+                            .collect(),
                         secure: s.arguments.iter().map(|a| a.secure).collect(),
                         focus: 0,
                     };
@@ -739,7 +779,14 @@ impl Launcher {
                         macos::open(&link.url_for(q.trim()));
                     }
                     _ => {
-                        let view = View::Args { title: link.name.clone(), target: ArgsFor::Quicklink(link.id()), values: vec![String::new()], placeholders: vec!["Query".into()], secure: vec![false], focus: 0 };
+                        let view = View::Args {
+                            title: link.name.clone(),
+                            target: ArgsFor::Quicklink(link.id()),
+                            values: vec![String::new()],
+                            placeholders: vec!["Query".into()],
+                            secure: vec![false],
+                            focus: 0,
+                        };
                         self.push(view, String::new());
                     }
                 }
@@ -824,7 +871,8 @@ impl Launcher {
             }
             Run::MoveFavorite(id, by) => {
                 // Among the favorites on screen; uninstalled or disabled ones keep their place.
-                let shown: Vec<String> = self.sections.iter().filter(|s| s.title == "Favorites").flat_map(|s| s.items.iter().map(|i| i.id.clone())).collect();
+                let shown: Vec<String> =
+                    self.sections.iter().filter(|s| s.title == "Favorites").flat_map(|s| s.items.iter().map(|i| i.id.clone())).collect();
                 data::move_favorite(&mut self.favorites, &id, by, |f| shown.iter().any(|s| s == f));
                 let _ = prefs::save(data::FAVORITES, &self.favorites);
                 self.epoch += 1;
@@ -892,7 +940,11 @@ impl Launcher {
         self.confirm = None;
         match c {
             Cmd::SearchFiles => {
-                let q = if commands::def(Cmd::SearchFiles).title.to_lowercase().starts_with(&root_query.to_lowercase()) { String::new() } else { root_query };
+                let q = if commands::def(Cmd::SearchFiles).title.to_lowercase().starts_with(&root_query.to_lowercase()) {
+                    String::new()
+                } else {
+                    root_query
+                };
                 self.push(View::Files, q);
             }
             Cmd::ClipboardHistory => self.push(View::Clipboard, String::new()),
@@ -908,7 +960,8 @@ impl Launcher {
                 {
                     std::thread::spawn(move || send(Msg::MenusDone(token, pid, ax::menu_items(pid))));
                 }
-                let cached = self.menu_cache.as_ref().filter(|(pid, _)| front.as_ref().is_some_and(|(_, p)| p == pid)).map(|(_, v)| v.clone());
+                let cached =
+                    self.menu_cache.as_ref().filter(|(pid, _)| front.as_ref().is_some_and(|(_, p)| p == pid)).map(|(_, v)| v.clone());
                 // Without Accessibility there's nothing to wait for.
                 let items = if trusted { cached } else { Some(Vec::new()) };
                 self.push(View::Menus { app, items, error, token }, String::new());
@@ -924,7 +977,13 @@ impl Launcher {
                 self.push(View::Windows { items: (!trusted).then(Vec::new), token }, String::new());
             }
             Cmd::SearchEmoji => {
-                let q = if "search emoji & symbols".starts_with(&root_query.to_lowercase()) || "emoji".starts_with(&root_query.to_lowercase()) { String::new() } else { root_query };
+                let q = if "search emoji & symbols".starts_with(&root_query.to_lowercase())
+                    || "emoji".starts_with(&root_query.to_lowercase())
+                {
+                    String::new()
+                } else {
+                    root_query
+                };
                 self.push(View::Emoji, q);
             }
             Cmd::SavedColors => self.push(View::Colors, String::new()),
@@ -991,13 +1050,18 @@ impl Launcher {
             }
             Cmd::EjectAllDisks => {
                 self.hide(now);
-                background(|| macos::osascript(r#"tell application "Finder" to eject (every disk whose ejectable is true)"#).map(|_| "Ejected all disks".into()));
+                background(|| {
+                    macos::osascript(r#"tell application "Finder" to eject (every disk whose ejectable is true)"#)
+                        .map(|_| "Ejected all disks".into())
+                });
             }
             Cmd::ToggleAppearance => {
                 self.hide(now);
                 background(|| {
-                    macos::osascript(r#"tell application "System Events" to tell appearance preferences to set dark mode to not dark mode
-tell application "System Events" to tell appearance preferences to get dark mode"#)
+                    macos::osascript(
+                        r#"tell application "System Events" to tell appearance preferences to set dark mode to not dark mode
+tell application "System Events" to tell appearance preferences to get dark mode"#,
+                    )
                     .map(|dark| if dark == "true" { "Dark appearance".into() } else { "Light appearance".into() })
                 });
             }
@@ -1073,7 +1137,11 @@ tell application "System Events" to tell appearance preferences to get dark mode
                     let out = scripts::run(&s, &args, Duration::from_secs(60));
                     let last = out.text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
                     if compact || !out.ok {
-                        send(Msg::Hud(if out.ok { if last.is_empty() { format!("{} finished", s.title) } else { last } } else { format!("{} failed", s.title) }));
+                        send(Msg::Hud(if out.ok {
+                            if last.is_empty() { format!("{} finished", s.title) } else { last }
+                        } else {
+                            format!("{} failed", s.title)
+                        }));
                     }
                 });
             }
@@ -1228,7 +1296,8 @@ tell application "System Events" to tell appearance preferences to get dark mode
                     self.toast("That extension is gone", false, now);
                     return;
                 };
-                let required: Vec<bool> = self.scripts.get(i).map(|s| s.arguments.iter().map(|a| !a.optional).collect()).unwrap_or_default();
+                let required: Vec<bool> =
+                    self.scripts.get(i).map(|s| s.arguments.iter().map(|a| !a.optional).collect()).unwrap_or_default();
                 if values.iter().zip(&required).any(|(v, r)| *r && v.trim().is_empty()) {
                     self.toast("Fill in the required fields", false, now);
                     return;
@@ -1277,7 +1346,8 @@ tell application "System Events" to tell appearance preferences to get dark mode
                 Err(e) => {
                     eprintln!("{APP_NAME}: couldn't register {text}: {e}");
                     if target == "toggle" {
-                        self.runtime.hotkey_error = Some(format!("{} is already used by another app.", crate::settings::hotkey_label(&text)));
+                        self.runtime.hotkey_error =
+                            Some(format!("{} is already used by another app.", crate::settings::hotkey_label(&text)));
                     }
                 }
             }
@@ -1298,8 +1368,20 @@ tell application "System Events" to tell appearance preferences to get dark mode
         if let Some(def) = commands::by_id(id) {
             let shows = matches!(
                 def.cmd,
-                Cmd::SearchFiles | Cmd::ClipboardHistory | Cmd::SearchMenuItems | Cmd::SwitchWindows | Cmd::SearchEmoji | Cmd::SavedColors | Cmd::CalculatorHistory | Cmd::SearchQuicklinks
-                    | Cmd::SearchSnippets | Cmd::Extensions | Cmd::QuitApplications | Cmd::CreateQuicklink | Cmd::CreateSnippet | Cmd::CreateExtension
+                Cmd::SearchFiles
+                    | Cmd::ClipboardHistory
+                    | Cmd::SearchMenuItems
+                    | Cmd::SwitchWindows
+                    | Cmd::SearchEmoji
+                    | Cmd::SavedColors
+                    | Cmd::CalculatorHistory
+                    | Cmd::SearchQuicklinks
+                    | Cmd::SearchSnippets
+                    | Cmd::Extensions
+                    | Cmd::QuitApplications
+                    | Cmd::CreateQuicklink
+                    | Cmd::CreateSnippet
+                    | Cmd::CreateExtension
             ) || def.confirm.is_some();
             if shows {
                 self.show(now);
@@ -1317,7 +1399,11 @@ tell application "System Events" to tell appearance preferences to get dark mode
                 self.show(now);
                 self.stack.truncate(1);
             }
-            let run = if !self.scripts[i].arguments.is_empty() && self.scripts[i].mode != Mode::List { Run::ScriptArgs(i) } else { Run::Script(i, vec![]) };
+            let run = if !self.scripts[i].arguments.is_empty() && self.scripts[i].mode != Mode::List {
+                Run::ScriptArgs(i)
+            } else {
+                Run::Script(i, vec![])
+            };
             self.run(run, id, now);
         } else if let Some(i) = self.quicklinks.iter().position(|q| q.id() == id) {
             if self.quicklinks[i].takes_query() {
@@ -1648,7 +1734,11 @@ fn background(f: impl FnOnce() -> Result<String, String> + Send + 'static) {
     std::thread::spawn(move || match f() {
         Ok(msg) => send(Msg::Hud(msg)),
         Err(e) => {
-            let msg = if e.contains("-1743") || e.contains("Not authorized") { "Allow Glint under Privacy › Automation".to_string() } else { "That didn't work".to_string() };
+            let msg = if e.contains("-1743") || e.contains("Not authorized") {
+                "Allow Glint under Privacy › Automation".to_string()
+            } else {
+                "That didn't work".to_string()
+            };
             send(Msg::Hud(msg));
         }
     });
@@ -1735,7 +1825,9 @@ fn spawn_watchers() {
 
 /// SIGUSR1 shows the launcher (Onboarding's "Open Glint", a second launch).
 fn listen_for_signals() {
-    if let Ok(mut signals) = signal_hook::iterator::Signals::new([SIG_SHOW, SIG_CHECK_UPDATES, SIG_INSTALL_UPDATE, libc::SIGTERM, libc::SIGINT]) {
+    if let Ok(mut signals) =
+        signal_hook::iterator::Signals::new([SIG_SHOW, SIG_CHECK_UPDATES, SIG_INSTALL_UPDATE, libc::SIGTERM, libc::SIGINT])
+    {
         std::thread::spawn(move || {
             for sig in signals.forever() {
                 match sig {
@@ -1762,7 +1854,12 @@ fn observe_activation() {
     });
     // SAFETY: the block only sends a message; it runs on the main thread.
     let observer = unsafe {
-        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(Some(NSApplicationDidBecomeActiveNotification), None, None, &block)
+        NSNotificationCenter::defaultCenter().addObserverForName_object_queue_usingBlock(
+            Some(NSApplicationDidBecomeActiveNotification),
+            None,
+            None,
+            &block,
+        )
     };
     std::mem::forget(observer);
 }

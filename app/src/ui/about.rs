@@ -92,7 +92,10 @@ impl About {
                 }
             });
             ui.add_space(14.0);
-            ui.add(egui::Label::new(theme::text("A lightning-fast, native launcher for macOS, written in Rust.", 10.5, theme::REGULAR).weak()).wrap());
+            ui.add(
+                egui::Label::new(theme::text("A lightning-fast, native launcher for macOS, written in Rust.", 10.5, theme::REGULAR).weak())
+                    .wrap(),
+            );
         });
     }
 }

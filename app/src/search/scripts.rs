@@ -223,7 +223,10 @@ pub fn run(s: &Script, args: &[String], timeout: Duration) -> Output {
     let mut cmd = Command::new(&s.path);
     cmd.args(args).current_dir(dir).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0);
     // Scripts expect a login-ish PATH (Homebrew, etc.), not launchd's minimal one.
-    cmd.env("PATH", format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".into())));
+    cmd.env(
+        "PATH",
+        format!("/opt/homebrew/bin:/usr/local/bin:{}", std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin:/usr/sbin:/sbin".into())),
+    );
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {

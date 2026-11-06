@@ -107,7 +107,8 @@ impl Quicklink {
 pub const QUICKLINKS: &str = "quicklinks.json";
 
 pub fn load_quicklinks() -> Vec<Quicklink> {
-    let stored: Option<Vec<Quicklink>> = std::fs::read_to_string(crate::paths::data(QUICKLINKS)).ok().and_then(|t| serde_json::from_str(&t).ok());
+    let stored: Option<Vec<Quicklink>> =
+        std::fs::read_to_string(crate::paths::data(QUICKLINKS)).ok().and_then(|t| serde_json::from_str(&t).ok());
     stored.unwrap_or_else(default_quicklinks)
 }
 

@@ -7,7 +7,8 @@ pub fn score(query: &str, title: &str, keywords: &[&str]) -> Option<i32> {
     if query.is_empty() {
         return Some(0);
     }
-    let best = std::iter::once(title).map(|t| one(query, t)).chain(keywords.iter().map(|k| one(query, k).map(|s| s - 120))).flatten().max()?;
+    let best =
+        std::iter::once(title).map(|t| one(query, t)).chain(keywords.iter().map(|k| one(query, k).map(|s| s - 120))).flatten().max()?;
     Some(best - title.chars().count().min(60) as i32)
 }
 
@@ -28,7 +29,11 @@ fn one(q: &str, text: &str) -> Option<i32> {
         return Some(760);
     }
     // Camel case initials too: "gh" -> GitHub Desktop.
-    let caps: String = text.split_whitespace().flat_map(|w| w.chars().take(1).chain(w.chars().skip(1).filter(|c| c.is_uppercase()))).collect::<String>().to_lowercase();
+    let caps: String = text
+        .split_whitespace()
+        .flat_map(|w| w.chars().take(1).chain(w.chars().skip(1).filter(|c| c.is_uppercase())))
+        .collect::<String>()
+        .to_lowercase();
     if caps.starts_with(q) && q.chars().count() >= 2 {
         return Some(740);
     }
