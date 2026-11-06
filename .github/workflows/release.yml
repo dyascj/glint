@@ -6,13 +6,18 @@ permissions:
   contents: write
 jobs:
   macos:
-    runs-on: macos-14
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      # Pinned by commit: this job holds the signing keys.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          toolchain: stable
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+      # Nothing gets signed and shipped to the updater unless it passes.
+      - name: Test
+        run: cd app && cargo test
       # Every release is signed with the same self-signed certificate, so macOS keeps
       # Glint's Accessibility permission across updates (an ad-hoc signature changes each build).
       - name: Import signing certificate

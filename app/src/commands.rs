@@ -59,19 +59,48 @@ pub struct Def {
     pub confirm: Option<&'static str>,
 }
 
-const fn d(cmd: Cmd, slug: &'static str, title: &'static str, subtitle: &'static str, symbol: &'static str, keywords: &'static [&'static str]) -> Def {
+const fn d(
+    cmd: Cmd,
+    slug: &'static str,
+    title: &'static str,
+    subtitle: &'static str,
+    symbol: &'static str,
+    keywords: &'static [&'static str],
+) -> Def {
     Def { cmd, slug, title, subtitle, symbol, keywords, confirm: None }
 }
 
-const fn c(cmd: Cmd, slug: &'static str, title: &'static str, subtitle: &'static str, symbol: &'static str, keywords: &'static [&'static str], confirm: &'static str) -> Def {
+const fn c(
+    cmd: Cmd,
+    slug: &'static str,
+    title: &'static str,
+    subtitle: &'static str,
+    symbol: &'static str,
+    keywords: &'static [&'static str],
+    confirm: &'static str,
+) -> Def {
     Def { cmd, slug, title, subtitle, symbol, keywords, confirm: Some(confirm) }
 }
 
 pub const ALL: &[Def] = &[
     d(Cmd::SearchFiles, "search-files", "Search Files", "Files", "doc.text.magnifyingglass", &["find", "finder", "documents", "spotlight"]),
     d(Cmd::ClipboardHistory, "clipboard-history", "Clipboard History", "Clipboard", "doc.on.clipboard", &["copy", "paste", "pasteboard"]),
-    d(Cmd::SearchMenuItems, "search-menu-items", "Search Menu Items", "Menus", "filemenu.and.selection", &["menu bar", "commands", "actions", "menubar"]),
-    d(Cmd::SwitchWindows, "switch-windows", "Switch Windows", "Windows", "macwindow.on.rectangle", &["window switcher", "alt tab", "windows", "focus"]),
+    d(
+        Cmd::SearchMenuItems,
+        "search-menu-items",
+        "Search Menu Items",
+        "Menus",
+        "filemenu.and.selection",
+        &["menu bar", "commands", "actions", "menubar"],
+    ),
+    d(
+        Cmd::SwitchWindows,
+        "switch-windows",
+        "Switch Windows",
+        "Windows",
+        "macwindow.on.rectangle",
+        &["window switcher", "alt tab", "windows", "focus"],
+    ),
     d(Cmd::PickColor, "pick-color", "Pick Color", "Colors", "eyedropper", &["eyedropper", "color picker", "colour", "sample"]),
     d(Cmd::SavedColors, "saved-colors", "Saved Colors", "Colors", "swatchpalette", &["color history", "swatches", "palette", "colour"]),
     d(Cmd::SearchEmoji, "search-emoji", "Search Emoji & Symbols", "Emoji", "face.smiling", &["emoji", "symbols", "smiley"]),
@@ -84,7 +113,14 @@ pub const ALL: &[Def] = &[
     d(Cmd::CreateExtension, "create-extension", "Create Extension", "Extensions", "hammer", &["script command", "new script", "plugin"]),
     d(Cmd::OpenExtensionsFolder, "open-extensions-folder", "Open Extensions Folder", "Extensions", "folder", &["script commands"]),
     d(Cmd::ReloadExtensions, "reload-extensions", "Reload Extensions", "Extensions", "arrow.clockwise", &["script commands", "refresh"]),
-    d(Cmd::QuitApplications, "quit-applications", "Quit Applications", "Applications", "xmark.app", &["force quit", "kill", "process", "close"]),
+    d(
+        Cmd::QuitApplications,
+        "quit-applications",
+        "Quit Applications",
+        "Applications",
+        "xmark.app",
+        &["force quit", "kill", "process", "close"],
+    ),
     d(Cmd::ClearClipboardHistory, "clear-clipboard-history", "Clear Clipboard History", "Clipboard", "trash", &["delete", "wipe"]),
     d(Cmd::LockScreen, "lock-screen", "Lock Screen", "System", "lock", &["lock"]),
     d(Cmd::Sleep, "sleep", "Sleep", "System", "moon", &["suspend"]),
@@ -94,9 +130,23 @@ pub const ALL: &[Def] = &[
     c(Cmd::LogOut, "log-out", "Log Out", "System", "rectangle.portrait.and.arrow.right", &["sign out", "logout"], "Log out of your Mac?"),
     c(Cmd::EmptyTrash, "empty-trash", "Empty Trash", "System", "trash", &["bin", "delete"], "Empty the Trash? This can't be undone."),
     d(Cmd::EjectAllDisks, "eject-all-disks", "Eject All Disks", "System", "eject", &["unmount", "drives", "usb"]),
-    d(Cmd::ToggleAppearance, "toggle-appearance", "Toggle System Appearance", "System", "circle.lefthalf.filled", &["dark mode", "light mode", "theme"]),
+    d(
+        Cmd::ToggleAppearance,
+        "toggle-appearance",
+        "Toggle System Appearance",
+        "System",
+        "circle.lefthalf.filled",
+        &["dark mode", "light mode", "theme"],
+    ),
     d(Cmd::ToggleHiddenFiles, "toggle-hidden-files", "Toggle Hidden Files", "System", "eye", &["dotfiles", "finder", "show all files"]),
-    d(Cmd::HideOthers, "hide-others", "Hide All Apps Except Frontmost", "System", "rectangle.on.rectangle.slash", &["hide others", "focus"]),
+    d(
+        Cmd::HideOthers,
+        "hide-others",
+        "Hide All Apps Except Frontmost",
+        "System",
+        "rectangle.on.rectangle.slash",
+        &["hide others", "focus"],
+    ),
     d(Cmd::UnhideAll, "unhide-all", "Unhide All Hidden Apps", "System", "rectangle.on.rectangle", &["show all"]),
     c(Cmd::QuitAllApps, "quit-all-apps", "Quit All Apps", "System", "xmark.circle", &["close everything"], "Quit every open app?"),
     d(Cmd::ToggleMute, "toggle-mute", "Toggle Mute", "System", "speaker.slash", &["sound", "volume", "silence"]),

@@ -11,10 +11,9 @@ use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::{AnyThread, MainThreadMarker};
 use objc2_app_kit::{
-    NSApplicationActivationPolicy, NSBitmapImageRep, NSColor, NSColorSampler, NSColorSpace, NSCompositingOperation, NSDeviceRGBColorSpace,
-    NSBitmapImageFileType, NSFont, NSFontAttributeName, NSGraphicsContext, NSImage, NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardTypePNG,
-    NSPasteboardTypeString, NSPasteboardTypeTIFF,
-    NSRunningApplication, NSStringDrawing, NSWorkspace,
+    NSApplicationActivationPolicy, NSBitmapImageFileType, NSBitmapImageRep, NSColor, NSColorSampler, NSColorSpace, NSCompositingOperation,
+    NSDeviceRGBColorSpace, NSFont, NSFontAttributeName, NSGraphicsContext, NSImage, NSPasteboard, NSPasteboardTypeFileURL,
+    NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSRunningApplication, NSStringDrawing, NSWorkspace,
 };
 use objc2_foundation::{NSArray, NSData, NSDictionary, NSFileManager, NSPoint, NSRect, NSSize, NSString, NSURL};
 
@@ -39,7 +38,12 @@ pub enum Img {
 
 /// Files `Img::Thumb` can draw: what NSImage reads.
 pub fn is_image(p: &Path) -> bool {
-    p.extension().is_some_and(|e| matches!(e.to_ascii_lowercase().to_str(), Some("png" | "jpg" | "jpeg" | "gif" | "tif" | "tiff" | "heic" | "icns" | "bmp" | "webp" | "pdf")))
+    p.extension().is_some_and(|e| {
+        matches!(
+            e.to_ascii_lowercase().to_str(),
+            Some("png" | "jpg" | "jpeg" | "gif" | "tif" | "tiff" | "heic" | "icns" | "bmp" | "webp" | "pdf")
+        )
+    })
 }
 
 /// The icon a script, quicklink or list item asked for: an image path, or an
@@ -92,44 +96,50 @@ pub fn render(img: &Img, px: usize) -> Option<Vec<u8>> {
         NSGraphicsContext::saveGraphicsState_class();
         NSGraphicsContext::setCurrentContext(Some(&ctx));
         let rect = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(px as f64, px as f64));
-        match img {
-            Img::File(path) => {
-                let image = NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&path.to_string_lossy()));
-                image.drawInRect_fromRect_operation_fraction(rect, NSRect::ZERO, NSCompositingOperation::SourceOver, 1.0);
+        // Drawing can bail out (a missing image); the graphics state is restored either way.
+        let drawn = (|| -> Option<()> {
+            match img {
+                Img::File(path) => {
+                    let image = NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&path.to_string_lossy()));
+                    image.drawInRect_fromRect_operation_fraction(rect, NSRect::ZERO, NSCompositingOperation::SourceOver, 1.0);
+                }
+                Img::Symbol(name) => {
+                    // Unknown names (typos in an extension) get a neutral glyph.
+                    let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None)
+                        .or_else(|| NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str("app.dashed"), None))?;
+                    // Fit the symbol's aspect inside the square, then paint it white.
+                    let s = image.size();
+                    let scale = (px as f64 * 0.86) / s.width.max(s.height).max(1.0);
+                    let (w, h) = (s.width * scale, s.height * scale);
+                    let r = NSRect::new(NSPoint::new((px as f64 - w) / 2.0, (px as f64 - h) / 2.0), NSSize::new(w, h));
+                    image.drawInRect_fromRect_operation_fraction(r, NSRect::ZERO, NSCompositingOperation::SourceOver, 1.0);
+                    NSColor::whiteColor().set();
+                    objc2_app_kit::NSRectFillUsingOperation(rect, NSCompositingOperation::SourceIn);
+                }
+                Img::Thumb(path) | Img::Preview(path) => {
+                    let image = NSImage::initWithContentsOfFile(NSImage::alloc(), &NSString::from_str(&path.to_string_lossy()))?;
+                    let s = image.size();
+                    let scale = px as f64 / s.width.max(s.height).max(1.0);
+                    let (w, h) = (s.width * scale, s.height * scale);
+                    let r = NSRect::new(NSPoint::new((px as f64 - w) / 2.0, (px as f64 - h) / 2.0), NSSize::new(w, h));
+                    image.drawInRect_fromRect_operation_fraction(r, NSRect::ZERO, NSCompositingOperation::SourceOver, 1.0);
+                }
+                Img::Emoji(e) => {
+                    let size = px as f64 * 0.8;
+                    let font = NSFont::fontWithName_size(&NSString::from_str("Apple Color Emoji"), size)
+                        .unwrap_or_else(|| NSFont::systemFontOfSize(size));
+                    let key: &NSString = NSFontAttributeName;
+                    let attrs = NSDictionary::from_slices(&[key], &[&*font as &AnyObject]);
+                    let s = NSString::from_str(e);
+                    let m = s.sizeWithAttributes(Some(&attrs));
+                    s.drawAtPoint_withAttributes(NSPoint::new((px as f64 - m.width) / 2.0, (px as f64 - m.height) / 2.0), Some(&attrs));
+                }
             }
-            Img::Symbol(name) => {
-                // Unknown names (typos in an extension) get a neutral glyph.
-                let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str(name), None)
-                    .or_else(|| NSImage::imageWithSystemSymbolName_accessibilityDescription(&NSString::from_str("app.dashed"), None))?;
-                // Fit the symbol's aspect inside the square, then paint it white.
-                let s = image.size();
-                let scale = (px as f64 * 0.86) / s.width.max(s.height).max(1.0);
-                let (w, h) = (s.width * scale, s.height * scale);
-                let r = NSRect::new(NSPoint::new((px as f64 - w) / 2.0, (px as f64 - h) / 2.0), NSSize::new(w, h));
-                image.drawInRect_fromRect_operation_fraction(r, NSRect::ZERO, NSCompositingOperation::SourceOver, 1.0);
-                NSColor::whiteColor().set();
-                objc2_app_kit::NSRectFillUsingOperation(rect, NSCompositingOperation::SourceIn);
-            }
-            Img::Thumb(path) | Img::Preview(path) => {
-                let image = NSImage::initWithContentsOfFile(NSImage::alloc(), &NSString::from_str(&path.to_string_lossy()))?;
-                let s = image.size();
-                let scale = px as f64 / s.width.max(s.height).max(1.0);
-                let (w, h) = (s.width * scale, s.height * scale);
-                let r = NSRect::new(NSPoint::new((px as f64 - w) / 2.0, (px as f64 - h) / 2.0), NSSize::new(w, h));
-                image.drawInRect_fromRect_operation_fraction(r, NSRect::ZERO, NSCompositingOperation::SourceOver, 1.0);
-            }
-            Img::Emoji(e) => {
-                let size = px as f64 * 0.8;
-                let font = NSFont::fontWithName_size(&NSString::from_str("Apple Color Emoji"), size).unwrap_or_else(|| NSFont::systemFontOfSize(size));
-                let key: &NSString = NSFontAttributeName;
-                let attrs = NSDictionary::from_slices(&[key], &[&*font as &AnyObject]);
-                let s = NSString::from_str(e);
-                let m = s.sizeWithAttributes(Some(&attrs));
-                s.drawAtPoint_withAttributes(NSPoint::new((px as f64 - m.width) / 2.0, (px as f64 - m.height) / 2.0), Some(&attrs));
-            }
-        }
+            Some(())
+        })();
         ctx.flushGraphics();
         NSGraphicsContext::restoreGraphicsState_class();
+        drawn?;
         let data = rep.bitmapData();
         if data.is_null() {
             return None;
@@ -205,10 +215,12 @@ fn write_image(pb: &NSPasteboard, path: &Path) -> bool {
 pub fn clipboard_concealed() -> bool {
     let pb = NSPasteboard::generalPasteboard();
     let types = pb.types();
-    types.is_some_and(|t| t.iter().any(|ty| {
-        let s = ty.to_string();
-        s == "org.nspasteboard.ConcealedType" || s == "org.nspasteboard.TransientType" || s == "com.agilebits.onepassword"
-    }))
+    types.is_some_and(|t| {
+        t.iter().any(|ty| {
+            let s = ty.to_string();
+            s == "org.nspasteboard.ConcealedType" || s == "org.nspasteboard.TransientType" || s == "com.agilebits.onepassword"
+        })
+    })
 }
 
 pub fn copy(text: &str) {
@@ -228,7 +240,8 @@ pub fn copy_file(path: &Path) {
     let objs = NSArray::from_retained_slice(&[Retained::into_super(url)]);
     // SAFETY: NSURL conforms to NSPasteboardWriting.
     unsafe {
-        let objs: &NSArray<objc2::runtime::ProtocolObject<dyn objc2_app_kit::NSPasteboardWriting>> = &*(&*objs as *const NSArray<objc2_foundation::NSObject> as *const _);
+        let objs: &NSArray<objc2::runtime::ProtocolObject<dyn objc2_app_kit::NSPasteboardWriting>> =
+            &*(&*objs as *const NSArray<objc2_foundation::NSObject> as *const _);
         pb.writeObjects(objs);
     }
 }
@@ -398,7 +411,8 @@ pub fn open_in(app_name: &str, p: &Path) {
 
 /// Quick Look preview panel.
 pub fn quick_look(p: &Path) {
-    let _ = Command::new("/usr/bin/qlmanage").arg("-p").arg(p).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+    let _ =
+        Command::new("/usr/bin/qlmanage").arg("-p").arg(p).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
 }
 
 pub fn trash(p: &Path) -> bool {
@@ -456,7 +470,9 @@ pub fn toggle_hidden_files() -> bool {
         .args(["read", "com.apple.finder", "AppleShowAllFiles"])
         .output()
         .is_ok_and(|o| matches!(String::from_utf8_lossy(&o.stdout).trim().to_lowercase().as_str(), "1" | "true" | "yes"));
-    let _ = Command::new("/usr/bin/defaults").args(["write", "com.apple.finder", "AppleShowAllFiles", "-bool", if shown { "false" } else { "true" }]).status();
+    let _ = Command::new("/usr/bin/defaults")
+        .args(["write", "com.apple.finder", "AppleShowAllFiles", "-bool", if shown { "false" } else { "true" }])
+        .status();
     let _ = Command::new("/usr/bin/killall").arg("Finder").status();
     !shown
 }
@@ -482,7 +498,10 @@ pub fn set_spotlight_shortcut(on: bool) -> bool {
         "<dict><key>enabled</key><{}/><key>value</key><dict><key>parameters</key><array><integer>32</integer><integer>49</integer><integer>1048576</integer></array><key>type</key><string>standard</string></dict></dict>",
         if on { "true" } else { "false" }
     );
-    let ok = Command::new("/usr/bin/defaults").args(["write", SYMBOLIC, "AppleSymbolicHotKeys", "-dict-add", "64", &entry]).status().is_ok_and(|s| s.success());
+    let ok = Command::new("/usr/bin/defaults")
+        .args(["write", SYMBOLIC, "AppleSymbolicHotKeys", "-dict-add", "64", &entry])
+        .status()
+        .is_ok_and(|s| s.success());
     let _ = Command::new("/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings").arg("-u").status();
     ok
 }

@@ -4,26 +4,23 @@ use eframe::egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, Stroke, Str
 
 use super::theme::Pal;
 
-/// Glint's mark: a search bar, the selected result (solid) and one more,
-/// with a glint beside the selection. Slat's slats, turned on their side.
+/// Glint's mark, the app icon flattened: a key with a glint on its top face.
 pub fn mark(painter: &Painter, rect: Rect, p: &Pal) {
-    mark_colored(painter, rect, p.ink, p.accent);
+    mark_colored(painter, rect, p.ink, p.bg);
 }
 
-pub fn mark_colored(painter: &Painter, rect: Rect, ink: Color32, glint: Color32) {
-    // Bars `w` wide, glint at 0.93w with radius 0.22h.
-    let h = rect.height();
-    let r = 0.2235 * h;
-    let w = (rect.width() - r) / 0.93;
-    let bar = |y0: f32, y1: f32, frac: f32| Rect::from_min_max(pos2(rect.left(), rect.top() + y0 * h), pos2(rect.left() + frac * w, rect.top() + y1 * h));
-    let stroke = Stroke::new((h * 0.05).clamp(1.0, 3.0), ink);
-    let r1 = bar(0.0, 0.28, 1.0);
-    painter.rect_stroke(r1, r1.height() / 2.0, stroke, StrokeKind::Inside);
-    let r2 = bar(0.37, 0.65, 0.72);
-    painter.rect_filled(r2, r2.height() / 2.0, ink);
-    let r3 = bar(0.74, 1.0, 0.48);
-    painter.rect_stroke(r3, r3.height() / 2.0, stroke, StrokeKind::Inside);
-    star(painter, pos2(rect.left() + 0.93 * w, rect.top() + 0.51 * h), r, glint);
+/// The mark in a square centered in `rect`: `key` fills the top face, a darker
+/// shade of it the skirt below, and the glint is drawn in `glint` on the face.
+pub fn mark_colored(painter: &Painter, rect: Rect, key: Color32, glint: Color32) {
+    let s = rect.width().min(rect.height());
+    let sq = Rect::from_center_size(rect.center(), vec2(s, s));
+    let at = |x: f32, y: f32| pos2(sq.left() + x * s, sq.top() + y * s);
+    let shade = |c: u8| (f32::from(c) * 0.6) as u8;
+    let skirt = Color32::from_rgba_unmultiplied(shade(key.r()), shade(key.g()), shade(key.b()), key.a());
+    painter.rect_filled(Rect::from_min_max(at(0.0, 0.08), at(1.0, 1.0)), 0.2 * s, skirt);
+    let face = Rect::from_min_max(at(0.1, 0.0), at(0.9, 0.78));
+    painter.rect_filled(face, 0.16 * s, key);
+    star(painter, face.center(), 0.3 * face.width(), glint);
 }
 
 /// Four-point glint with curved sides (an astroid), as a triangle fan.
@@ -63,10 +60,26 @@ enum Glyph {
 }
 
 const SCENES: [Scene; 4] = [
-    Scene { query: "saf", rows: &[("Safari", "Application", Glyph::App(0x5aa9f7)), ("Saved Colors", "Command", Glyph::Cmd), ("Search Files", "Command", Glyph::Cmd)], calc: None },
+    Scene {
+        query: "saf",
+        rows: &[
+            ("Safari", "Application", Glyph::App(0x5aa9f7)),
+            ("Saved Colors", "Command", Glyph::Cmd),
+            ("Search Files", "Command", Glyph::Cmd),
+        ],
+        calc: None,
+    },
     Scene { query: "24px to rem", rows: &[], calc: Some(("24px to rem", "1.5 rem")) },
     Scene { query: "#f3d694", rows: &[("#F3D694", "Color", Glyph::Swatch(0xf3d694)), ("Pick Color", "Command", Glyph::Cmd)], calc: None },
-    Scene { query: "invoice", rows: &[("invoice-oct.pdf", "~/Documents", Glyph::Doc), ("invoices", "~/Desktop", Glyph::Doc), ("Invoice Template.pages", "~/Documents", Glyph::Doc)], calc: None },
+    Scene {
+        query: "invoice",
+        rows: &[
+            ("invoice-oct.pdf", "~/Documents", Glyph::Doc),
+            ("invoices", "~/Desktop", Glyph::Doc),
+            ("Invoice Template.pages", "~/Documents", Glyph::Doc),
+        ],
+        calc: None,
+    },
 ];
 
 /// A small launcher typing a few searches in a loop (`t` in seconds).

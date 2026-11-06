@@ -39,7 +39,7 @@ pub struct Pal {
     pub focus: Color32,
     /// Glint gold: the mark's glint, links, focus.
     pub accent: Color32,
-    /// Slat blue, for informational marks.
+    /// Blue, for informational marks.
     pub info: Color32,
     pub success: Color32,
     pub warning: Color32,
@@ -368,7 +368,13 @@ pub fn segmented<T: PartialEq + Copy>(ui: &mut Ui, value: &mut T, options: &[(T,
         if sr.hovered() && i != idx {
             ui.painter().rect_filled(r, 6, p.chip);
         }
-        let color = if i == idx { p.bright } else if sr.hovered() { p.ink } else { p.muted };
+        let color = if i == idx {
+            p.bright
+        } else if sr.hovered() {
+            p.ink
+        } else {
+            p.muted
+        };
         ui.painter().galley(r.center() - g.size() / 2.0, g, color);
     }
     resp

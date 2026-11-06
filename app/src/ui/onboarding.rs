@@ -98,8 +98,9 @@ impl Onboarding {
             self.s = m;
         }
         Prefs::update(|p| p.onboarding_completed = true);
+        // Also on "Set up later", so the login item matches the setting Settings shows.
+        let _ = crate::login::apply(self.s.start_at_login);
         if start {
-            let _ = crate::login::apply(self.s.start_at_login);
             open_launcher();
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -159,35 +160,38 @@ impl eframe::App for Onboarding {
             }
         });
 
-        egui::Panel::bottom("bottom").exact_size(68.0).show_separator_line(false).frame(theme::glass(Margin::symmetric(40, 0))).show(ui, |ui| {
-            let r = ui.max_rect();
-            ui.painter().hline(r.x_range(), r.top(), Stroke::new(1.0, p.line));
-            ui.horizontal_centered(|ui| {
-                if self.page < DONE {
-                    let later = if self.page == TRY { "Skip for now" } else { "Set up later" };
-                    if theme::button(ui, later, Kind::Plain).clicked() {
-                        self.finish(&ctx, false);
-                    }
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let primary = match self.page {
-                        0 => "Get started".to_string(),
-                        DONE => format!("Start using {APP_NAME}"),
-                        _ => "Continue".to_string(),
-                    };
-                    if theme::button(ui, &format!("{primary}  →"), Kind::Primary).clicked() {
-                        if self.page == DONE {
-                            self.finish(&ctx, true);
-                        } else {
-                            self.go(self.page + 1, now);
+        egui::Panel::bottom("bottom").exact_size(68.0).show_separator_line(false).frame(theme::glass(Margin::symmetric(40, 0))).show(
+            ui,
+            |ui| {
+                let r = ui.max_rect();
+                ui.painter().hline(r.x_range(), r.top(), Stroke::new(1.0, p.line));
+                ui.horizontal_centered(|ui| {
+                    if self.page < DONE {
+                        let later = if self.page == TRY { "Skip for now" } else { "Set up later" };
+                        if theme::button(ui, later, Kind::Plain).clicked() {
+                            self.finish(&ctx, false);
                         }
                     }
-                    if self.page > 0 && theme::button(ui, "←  Back", Kind::Secondary).clicked() {
-                        self.go(self.page - 1, now);
-                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let primary = match self.page {
+                            0 => "Get started".to_string(),
+                            DONE => format!("Start using {APP_NAME}"),
+                            _ => "Continue".to_string(),
+                        };
+                        if theme::button(ui, &format!("{primary}  →"), Kind::Primary).clicked() {
+                            if self.page == DONE {
+                                self.finish(&ctx, true);
+                            } else {
+                                self.go(self.page + 1, now);
+                            }
+                        }
+                        if self.page > 0 && theme::button(ui, "←  Back", Kind::Secondary).clicked() {
+                            self.go(self.page - 1, now);
+                        }
+                    });
                 });
-            });
-        });
+            },
+        );
 
         egui::CentralPanel::default().frame(theme::glass(Margin { left: 48, right: 48, top: 16, bottom: 12 })).show(ui, |ui| {
             let f = self.fade();
@@ -296,17 +300,19 @@ impl Onboarding {
             for chunk in FEATURES.chunks(3) {
                 ui.columns(3, |cols| {
                     for (col, (sym, title, detail)) in cols.iter_mut().zip(chunk) {
-                        card(col, |ui| ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                            ui.add_space(14.0);
-                            let (r, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
-                            ui.painter().rect_filled(r, 8, p.knob);
-                            self.icons.paint(ui.painter(), &Img::Symbol(sym), r.shrink(6.0), p.accent);
-                            ui.add_space(8.0);
-                            ui.label(theme::text(*title, 13.0, theme::SEMIBOLD).color(p.bright));
-                            ui.add_space(3.0);
-                            ui.add(egui::Label::new(theme::caption(*detail)).wrap());
-                            ui.add_space(14.0);
-                        }));
+                        card(col, |ui| {
+                            ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                ui.add_space(14.0);
+                                let (r, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
+                                ui.painter().rect_filled(r, 8, p.knob);
+                                self.icons.paint(ui.painter(), &Img::Symbol(sym), r.shrink(6.0), p.accent);
+                                ui.add_space(8.0);
+                                ui.label(theme::text(*title, 13.0, theme::SEMIBOLD).color(p.bright));
+                                ui.add_space(3.0);
+                                ui.add(egui::Label::new(theme::caption(*detail)).wrap());
+                                ui.add_space(14.0);
+                            })
+                        });
                     }
                 });
                 ui.add_space(8.0);
@@ -319,7 +325,10 @@ impl Onboarding {
         rise(ui, f, 1, |ui| heading(ui, "Pick your hotkey."));
         ui.add_space(2.0);
         rise(ui, f, 2, |ui| {
-            theme::para(ui, theme::body(format!("This opens {APP_NAME} from any app. Most people put it on ⌘ Space, where Spotlight lives.")).weak());
+            theme::para(
+                ui,
+                theme::body(format!("This opens {APP_NAME} from any app. Most people put it on ⌘ Space, where Spotlight lives.")).weak(),
+            );
         });
         ui.add_space(16.0);
         let hk = self.s.hotkey.clone();
@@ -344,7 +353,11 @@ impl Onboarding {
                 card(&mut cols[1], |ui| {
                     ui.add_space(14.0);
                     ui.label(theme::text("Replace Spotlight", 13.0, theme::SEMIBOLD));
-                    let detail = if on_cmd_space { "Glint is on ⌘ Space. Undo gives Spotlight its shortcut back." } else { "Turns off Spotlight's ⌘ Space and gives it to Glint. You can undo this." };
+                    let detail = if on_cmd_space {
+                        "Glint is on ⌘ Space. Undo gives Spotlight its shortcut back."
+                    } else {
+                        "Turns off Spotlight's ⌘ Space and gives it to Glint. You can undo this."
+                    };
                     ui.add(egui::Label::new(theme::caption(detail)).wrap());
                     ui.add_space(10.0);
                     if on_cmd_space {
@@ -378,12 +391,12 @@ impl Onboarding {
                 rise(ui, f, 1, |ui| heading(ui, title));
                 ui.add_space(4.0);
                 rise(ui, f, 2, |ui| {
-                    theme::para(ui, theme::body("Accessibility lets Glint paste clipboard history, snippets and emoji into the app you were using. It's optional: without it, Glint copies and you paste.").weak());
+                    theme::para(ui, theme::body("Accessibility lets Glint paste clipboard history, snippets and emoji into the app you were using, and powers Search Menu Items and Switch Windows. It's optional: without it, Glint copies and you paste.").weak());
                 });
                 ui.add_space(12.0);
                 rise(ui, f, 3, |ui| {
                     ui.spacing_mut().item_spacing.y = 6.0;
-                    for reason in ["Only used to press ⌘V for you", "Never reads what's on your screen", "Nothing leaves your Mac"] {
+                    for reason in ["Presses ⌘V to paste for you", "Reads menus and window titles only when you search them", "Nothing leaves your Mac"] {
                         ui.horizontal(|ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(10.0, 16.0), Sense::hover());
                             ui.painter().circle_filled(r.center(), 2.5, p.ink);
@@ -430,7 +443,7 @@ impl Onboarding {
                         let mut glint = self.ax;
                         let mut clicked = false;
                         let mut others = [true, false];
-                        for (i, name) in [APP_NAME, "Terminal", "Slat"].iter().enumerate() {
+                        for (i, name) in [APP_NAME, "Terminal", "Script Editor"].iter().enumerate() {
                             hairline(ui);
                             ui.horizontal(|ui| {
                                 ui.set_height(36.0);
@@ -464,7 +477,8 @@ impl Onboarding {
         let hk = hotkey_label(&self.s.hotkey);
         rise(ui, f, 1, |ui| heading(ui, if all { "You've got it." } else { "Give it a go." }));
         rise(ui, f, 2, |ui| {
-            let body = if all { "All five, nicely done.".to_string() } else { format!("Press {hk} and try each one. They tick off as you go.") };
+            let body =
+                if all { "All five, nicely done.".to_string() } else { format!("Press {hk} and try each one. They tick off as you go.") };
             ui.label(theme::body(body).weak());
         });
         ui.add_space(10.0);
@@ -519,21 +533,35 @@ impl Onboarding {
         rise(ui, f, 1, |ui| heading(ui, "Make it yours."));
         ui.add_space(2.0);
         rise(ui, f, 2, |ui| {
-            theme::para(ui, theme::body("Extensions are scripts, in any language. Drop one in the Extensions folder and it becomes a command.").weak());
+            theme::para(
+                ui,
+                theme::body("Extensions are scripts, in any language. Drop one in the Extensions folder and it becomes a command.").weak(),
+            );
         });
         ui.add_space(12.0);
         rise(ui, f, 3, |ui| {
             let sample = "#!/bin/bash\n# @glint.title Say Hello\n# @glint.mode fullOutput\n# @glint.argument1 { \"type\": \"text\", \"placeholder\": \"Name\" }\n\necho \"Hello, $1!\"";
-            egui::Frame::new().fill(egui::Color32::from_black_alpha(100)).stroke(Stroke::new(1.0, p.line)).corner_radius(10).inner_margin(Margin::same(14)).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.label(theme::mono(sample, 12.0).color(p.ink));
-            });
+            egui::Frame::new()
+                .fill(egui::Color32::from_black_alpha(100))
+                .stroke(Stroke::new(1.0, p.line))
+                .corner_radius(10)
+                .inner_margin(Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(theme::mono(sample, 12.0).color(p.ink));
+                });
         });
         ui.add_space(10.0);
         rise(ui, f, 4, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                for (mode, what) in [("fullOutput", "shows output"), ("list", "searchable JSON results"), ("compact", "a one-line HUD"), ("silent", "runs quietly"), ("inline", "a live subtitle")] {
+                for (mode, what) in [
+                    ("fullOutput", "shows output"),
+                    ("list", "searchable JSON results"),
+                    ("compact", "a one-line HUD"),
+                    ("silent", "runs quietly"),
+                    ("inline", "a live subtitle"),
+                ] {
                     theme::pill(ui, Mark::Off, &format!("{mode} · {what}"));
                 }
             });
@@ -566,7 +594,10 @@ impl Onboarding {
         rise(ui, f, 1, |ui| heading(ui, "Ready when you are."));
         ui.add_space(4.0);
         rise(ui, f, 2, |ui| {
-            theme::para(ui, theme::body(format!("Press {hk} anywhere. Settings live in the menu bar, or press ⌘, inside {APP_NAME}.")).weak());
+            theme::para(
+                ui,
+                theme::body(format!("Press {hk} anywhere. Settings live in the menu bar, or press ⌘, inside {APP_NAME}.")).weak(),
+            );
         });
         ui.add_space(18.0);
         let ext = scripts::scan().len();

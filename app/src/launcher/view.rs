@@ -2,8 +2,8 @@
 //! detail pane, action bar, the ⌘K actions panel and confirmations.
 
 use eframe::egui::{
-    self, Align, Align2, Color32, CursorIcon, FontId, Frame, Id, Key, Layout, Margin, Order, Rect, Response, ScrollArea, Sense, Stroke, StrokeKind,
-    TextEdit, Ui, UiBuilder, pos2, vec2,
+    self, Align, Align2, Color32, CursorIcon, FontId, Frame, Id, Key, Layout, Margin, Order, Rect, Response, ScrollArea, Sense, Stroke,
+    StrokeKind, TextEdit, Ui, UiBuilder, pos2, vec2,
 };
 
 use super::items::{self, Action, Icon, Item, Kind, Run, Shortcut};
@@ -69,12 +69,17 @@ impl Launcher {
         let q = self.page().query.trim().to_lowercase();
         if q.is_empty() {
             // Walk what you've used, not all ~1,900 emoji.
-            let mut recent: Vec<(i32, Emoji)> = self.frecency.0.keys().filter_map(|k| {
-                let e = emojis::get(k.strip_prefix("emoji:")?)?;
-                let b = self.frecency.bonus(k);
-                (b > 0).then_some((b, e))
-            }).collect();
-            recent.sort_by(|a, b| b.0.cmp(&a.0));
+            let mut recent: Vec<(i32, Emoji)> = self
+                .frecency
+                .0
+                .keys()
+                .filter_map(|k| {
+                    let e = emojis::get(k.strip_prefix("emoji:")?)?;
+                    let b = self.frecency.bonus(k);
+                    (b > 0).then_some((b, e))
+                })
+                .collect();
+            recent.sort_by_key(|a| std::cmp::Reverse(a.0));
             let mut out = Vec::new();
             if !recent.is_empty() {
                 out.push(("Frequently Used".to_string(), recent.into_iter().take(EMOJI_COLS * 2).map(|(_, e)| e).collect()));
@@ -87,10 +92,12 @@ impl Launcher {
         let mut hits: Vec<(i32, Emoji)> = emojis::iter()
             .filter_map(|e| {
                 let codes: Vec<&str> = e.shortcodes().collect();
-                crate::search::fuzzy::score(&q, e.name(), &codes).filter(|s| *s >= 500).map(|s| (s + self.frecency.bonus(&format!("emoji:{}", e.as_str())), e))
+                crate::search::fuzzy::score(&q, e.name(), &codes)
+                    .filter(|s| *s >= 500)
+                    .map(|s| (s + self.frecency.bonus(&format!("emoji:{}", e.as_str())), e))
             })
             .collect();
-        hits.sort_by(|a, b| b.0.cmp(&a.0));
+        hits.sort_by_key(|a| std::cmp::Reverse(a.0));
         vec![("Results".into(), hits.into_iter().map(|(_, e)| e).collect())]
     }
 
@@ -102,13 +109,19 @@ impl Launcher {
     pub fn color_cells(&self) -> Vec<Option<(usize, Rgb)>> {
         let q = self.page().query.trim().to_lowercase();
         let mut cells = vec![None];
-        cells.extend(self.colors.iter().enumerate().filter(|(_, c)| {
-            q.is_empty() || ColorFormat::ALL.iter().any(|f| c.color.format(*f).to_lowercase().contains(q.trim_start_matches('#')))
-        }).map(|(i, c)| Some((i, c.color))));
+        cells.extend(
+            self.colors
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| {
+                    q.is_empty() || ColorFormat::ALL.iter().any(|f| c.color.format(*f).to_lowercase().contains(q.trim_start_matches('#')))
+                })
+                .map(|(i, c)| Some((i, c.color))),
+        );
         cells
     }
 
-    fn grid_len(&self) -> usize {
+    pub(super) fn grid_len(&self) -> usize {
         match self.page().view {
             View::Emoji => self.emoji.iter().map(|(_, v)| v.len()).sum(),
             View::Colors => self.color_cells().len(),
@@ -118,7 +131,8 @@ impl Launcher {
 
     /// The actions for whatever is selected, and its ranking id.
     pub fn current_actions(&self) -> (String, Vec<Action>) {
-        let a = |title: &str, symbol: &'static str, sc: Option<Shortcut>, run: Run| Action { title: title.into(), symbol, shortcut: sc, run };
+        let a =
+            |title: &str, symbol: &'static str, sc: Option<Shortcut>, run: Run| Action { title: title.into(), symbol, shortcut: sc, run };
         match &self.page().view {
             View::Emoji => match self.selected_emoji() {
                 Some(e) => (
@@ -126,7 +140,12 @@ impl Launcher {
                     vec![
                         a("Paste Emoji", "doc.on.clipboard", None, Run::Paste(e.as_str().into())),
                         a("Copy Emoji", "doc.on.doc", Some(Shortcut::cmd(Key::Enter)), Run::Copy(e.as_str().into())),
-                        a("Copy Name", "textformat", Some(Shortcut::cmd_shift(Key::C)), Run::Copy(e.shortcode().map_or_else(|| e.name().to_string(), |s| format!(":{s}:")))),
+                        a(
+                            "Copy Name",
+                            "textformat",
+                            Some(Shortcut::cmd_shift(Key::C)),
+                            Run::Copy(e.shortcode().map_or_else(|| e.name().to_string(), |s| format!(":{s}:"))),
+                        ),
                     ],
                 ),
                 None => (String::new(), vec![]),
@@ -251,7 +270,9 @@ impl Launcher {
         }
         let form_multiline = matches!(&self.page().view, View::Form(f) if f.fields.get(f.focus).is_some_and(|x| x.3));
         if take(ctx, true, false, false, Key::Enter) {
-            let a = if matches!(self.page().view, View::Form(_)) { acts.first() } else { acts.get(1) };
+            // The second action is ⌘↵ unless it has a shortcut of its own (Quit
+            // Application, Add to Favorites), which would make ⌘↵ a surprise.
+            let a = if matches!(self.page().view, View::Form(_)) { acts.first() } else { acts.get(1).filter(|a| a.shortcut.is_none()) };
             if let Some(a) = a.cloned() {
                 return self.run_action(&id, a, now);
             }
@@ -296,7 +317,8 @@ impl Launcher {
             return;
         }
         let cols = self.grid_cols();
-        if take(ctx, false, false, false, Key::ArrowDown) || take(ctx, false, false, true, Key::N) || take(ctx, false, false, true, Key::J) {
+        if take(ctx, false, false, false, Key::ArrowDown) || take(ctx, false, false, true, Key::N) || take(ctx, false, false, true, Key::J)
+        {
             self.move_selection(cols.unwrap_or(1) as isize);
         }
         if take(ctx, false, false, false, Key::ArrowUp) || take(ctx, false, false, true, Key::P) || take(ctx, false, false, true, Key::K) {
@@ -327,8 +349,16 @@ impl Launcher {
         }
         // keys may have changed the page or selection
         self.refresh_sections(now);
-        egui::Panel::top("search").exact_size(58.0).show_separator_line(false).frame(glass(Margin::symmetric(18, 0))).show(ui, |ui| self.search_bar(ui, now));
-        egui::Panel::bottom("bar").exact_size(42.0).show_separator_line(false).frame(glass(Margin::symmetric(14, 0))).show(ui, |ui| self.action_bar(ui, now));
+        egui::Panel::top("search")
+            .exact_size(58.0)
+            .show_separator_line(false)
+            .frame(glass(Margin::symmetric(18, 0)))
+            .show(ui, |ui| self.search_bar(ui, now));
+        egui::Panel::bottom("bar")
+            .exact_size(42.0)
+            .show_separator_line(false)
+            .frame(glass(Margin::symmetric(14, 0)))
+            .show(ui, |ui| self.action_bar(ui, now));
         egui::CentralPanel::default().frame(glass(Margin { left: 8, right: 8, top: 6, bottom: 4 })).show(ui, |ui| self.content(ui, now));
         if self.actions.is_some() {
             self.actions_panel(&ctx, now);
@@ -371,13 +401,20 @@ impl Launcher {
         let depth = self.stack.len();
         ui.painter().hline((r.left() - 18.0)..=(r.right() + 18.0), r.bottom() - 0.5, Stroke::new(1.0, p.line));
         let loading = self.file_loading
-            || matches!(&self.page().view, View::Output { text: None, .. } | View::List { due: Some(_), .. } | View::Menus { items: None, error: None, .. } | View::Windows { items: None, .. });
+            || matches!(
+                &self.page().view,
+                View::Output { text: None, .. }
+                    | View::List { due: Some(_), .. }
+                    | View::Menus { items: None, error: None, .. }
+                    | View::Windows { items: None, .. }
+            );
         if loading {
             // A thin progress sweep under the search bar.
             let t = ((now * 0.9) % 1.0) as f32;
             let w = r.width() * 0.3;
             let x = r.left() - 18.0 + (r.width() + 36.0 + w) * t - w;
-            let seg = Rect::from_min_max(pos2(x.max(r.left() - 18.0), r.bottom() - 1.5), pos2((x + w).min(r.right() + 18.0), r.bottom() + 0.5));
+            let seg =
+                Rect::from_min_max(pos2(x.max(r.left() - 18.0), r.bottom() - 1.5), pos2((x + w).min(r.right() + 18.0), r.bottom() + 0.5));
             ui.painter().rect_filled(seg, 1, p.accent.gamma_multiply(0.8));
             // 30 fps is plenty for a progress sweep; full rate redraws the blur too.
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
@@ -401,10 +438,23 @@ impl Launcher {
                     ui.label(text(title, 15.0, MEDIUM).color(p.bright));
                     for i in 0..values.len() {
                         let id = page_id.with(("arg", i));
-                        let resp = Frame::new().fill(p.raised).stroke(Stroke::new(1.0, if *focus == i { p.focus } else { p.line })).corner_radius(8).inner_margin(Margin::symmetric(10, 6)).show(ui, |ui| {
-                            ui.add(TextEdit::singleline(&mut values[i]).id(id).frame(Frame::NONE).password(secure[i]).font(FontId::proportional(14.0)).desired_width(150.0)
-                                .hint_text(text(placeholders[i].clone(), 14.0, REGULAR).color(p.dim)))
-                        }).inner;
+                        let resp = Frame::new()
+                            .fill(p.raised)
+                            .stroke(Stroke::new(1.0, if *focus == i { p.focus } else { p.line }))
+                            .corner_radius(8)
+                            .inner_margin(Margin::symmetric(10, 6))
+                            .show(ui, |ui| {
+                                ui.add(
+                                    TextEdit::singleline(&mut values[i])
+                                        .id(id)
+                                        .frame(Frame::NONE)
+                                        .password(secure[i])
+                                        .font(FontId::proportional(14.0))
+                                        .desired_width(150.0)
+                                        .hint_text(text(placeholders[i].clone(), 14.0, REGULAR).color(p.dim)),
+                                )
+                            })
+                            .inner;
                         if resp.gained_focus() {
                             *focus = i;
                         }
@@ -471,7 +521,9 @@ impl Launcher {
         let p = pal();
         let r = ui.max_rect();
         let (title, sub) = match &self.page().view {
-            View::Files if self.page().query.trim().chars().count() < 2 => ("Search your files", "Type at least two letters of a file or folder name."),
+            View::Files if self.page().query.trim().chars().count() < 2 => {
+                ("Search your files", "Type at least two letters of a file or folder name.")
+            }
             View::Files if self.file_loading || self.file_due.is_some() => ("Searching…", ""),
             View::Clipboard => ("Nothing copied yet", "Copy something and it shows up here."),
             View::Snippets => ("No snippets yet", "Create one with Create Snippet."),
@@ -500,30 +552,33 @@ impl Launcher {
         let mut clicked = None;
         let hotkeys = self.settings.hotkeys.clone();
         let (sections, icons) = (&self.sections, &mut self.icons);
-        ScrollArea::vertical().auto_shrink(false).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let mut idx = 0;
-            for s in sections {
-                if s.items.is_empty() {
-                    continue;
+        ScrollArea::vertical().auto_shrink(false).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded).show(
+            ui,
+            |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                let mut idx = 0;
+                for s in sections {
+                    if s.items.is_empty() {
+                        continue;
+                    }
+                    section_title(ui, &s.title);
+                    for it in &s.items {
+                        let resp = row(ui, icons, it, idx == selected, hotkeys.get(&it.id).map(String::as_str));
+                        if idx == selected && scroll {
+                            resp.scroll_to_me(None);
+                        }
+                        if resp.hovered() && moved {
+                            hovered = Some(idx);
+                        }
+                        if resp.clicked() {
+                            clicked = Some(idx);
+                        }
+                        idx += 1;
+                    }
                 }
-                section_title(ui, &s.title);
-                for it in &s.items {
-                    let resp = row(ui, icons, it, idx == selected, hotkeys.get(&it.id).map(String::as_str));
-                    if idx == selected && scroll {
-                        resp.scroll_to_me(None);
-                    }
-                    if resp.hovered() && moved {
-                        hovered = Some(idx);
-                    }
-                    if resp.clicked() {
-                        clicked = Some(idx);
-                    }
-                    idx += 1;
-                }
-            }
-            ui.add_space(6.0);
-        });
+                ui.add_space(6.0);
+            },
+        );
         // With ⌘K open, the panel's actions stay bound to the row they were opened on.
         if let Some(h) = hovered
             && self.actions.is_none()
@@ -576,10 +631,14 @@ impl Launcher {
                 });
                 ui.add_space(12.0);
             } else if let Some(preview) = &it.preview {
-                ScrollArea::vertical().id_salt("preview").max_height((ui.available_height() - 130.0).max(80.0)).auto_shrink([false, true]).show(ui, |ui| {
-                    let shown: String = preview.chars().take(4000).collect();
-                    ui.add(egui::Label::new(mono(shown, 12.5).color(p.ink)).wrap().selectable(true));
-                });
+                ScrollArea::vertical()
+                    .id_salt("preview")
+                    .max_height((ui.available_height() - 130.0).max(80.0))
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        let shown: String = preview.chars().take(4000).collect();
+                        ui.add(egui::Label::new(mono(shown, 12.5).color(p.ink)).wrap().selectable(true));
+                    });
                 ui.add_space(10.0);
             }
             if !it.detail.is_empty() {
@@ -698,15 +757,32 @@ impl Launcher {
                     match cell {
                         None => {
                             ui.painter().rect_stroke(sw, 10, Stroke::new(1.0, p.line), StrokeKind::Inside);
-                            icons.paint(ui.painter(), &Img::Symbol("eyedropper"), Rect::from_center_size(sw.center(), vec2(24.0, 24.0)), p.ink);
-                            ui.painter().text(pos2(r.center().x, sw.bottom() + 12.0), Align2::CENTER_CENTER, "Pick Color", FontId::proportional(11.0), p.muted);
+                            icons.paint(
+                                ui.painter(),
+                                &Img::Symbol("eyedropper"),
+                                Rect::from_center_size(sw.center(), vec2(24.0, 24.0)),
+                                p.ink,
+                            );
+                            ui.painter().text(
+                                pos2(r.center().x, sw.bottom() + 12.0),
+                                Align2::CENTER_CENTER,
+                                "Pick Color",
+                                FontId::proportional(11.0),
+                                p.muted,
+                            );
                         }
                         Some((_, c)) => {
                             let [rr, gg, bb, aa] = c.u8();
                             ui.painter().rect_filled(sw, 10, Color32::from_rgba_unmultiplied(rr, gg, bb, aa));
                             ui.painter().rect_stroke(sw, 10, Stroke::new(1.0, p.line), StrokeKind::Inside);
                             let label = c.format(fmt);
-                            ui.painter().text(pos2(r.center().x, sw.bottom() + 12.0), Align2::CENTER_CENTER, label, FontId::proportional(11.0), if idx == selected { p.bright } else { p.muted });
+                            ui.painter().text(
+                                pos2(r.center().x, sw.bottom() + 12.0),
+                                Align2::CENTER_CENTER,
+                                label,
+                                FontId::proportional(11.0),
+                                if idx == selected { p.bright } else { p.muted },
+                            );
                         }
                     }
                     if resp.clicked() {
@@ -761,10 +837,22 @@ impl Launcher {
                     let (label, value, hint, multi) = &mut f.fields[i];
                     ui.label(theme::eyebrow(label));
                     let id = page_id.with(i);
-                    let resp = Frame::new().fill(p.raised).stroke(Stroke::new(1.0, if f.focus == i { p.focus } else { p.line })).corner_radius(8).inner_margin(Margin::symmetric(10, 8)).show(ui, |ui| {
-                        let te = if *multi { TextEdit::multiline(value).desired_rows(6) } else { TextEdit::singleline(value) };
-                        ui.add(te.id(id).frame(Frame::NONE).font(FontId::proportional(13.0)).desired_width(f32::INFINITY).hint_text(text(*hint, 13.0, REGULAR).color(p.dim)))
-                    }).inner;
+                    let resp = Frame::new()
+                        .fill(p.raised)
+                        .stroke(Stroke::new(1.0, if f.focus == i { p.focus } else { p.line }))
+                        .corner_radius(8)
+                        .inner_margin(Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            let te = if *multi { TextEdit::multiline(value).desired_rows(6) } else { TextEdit::singleline(value) };
+                            ui.add(
+                                te.id(id)
+                                    .frame(Frame::NONE)
+                                    .font(FontId::proportional(13.0))
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text(text(*hint, 13.0, REGULAR).color(p.dim)),
+                            )
+                        })
+                        .inner;
                     if resp.gained_focus() {
                         f.focus = i;
                     }
@@ -790,7 +878,10 @@ impl Launcher {
                     };
                     ui.label(theme::caption(explain));
                     ui.add_space(4.0);
-                    ui.label(theme::caption(format!("Saved to {} as a bash script.", crate::paths::tilde(&crate::paths::extensions_dir()))));
+                    ui.label(theme::caption(format!(
+                        "Saved to {} as a bash script.",
+                        crate::paths::tilde(&crate::paths::extensions_dir())
+                    )));
                 }
                 if let Some(e) = &f.error {
                     ui.add_space(6.0);
@@ -830,7 +921,8 @@ impl Launcher {
                     keycap(ui, "⌘");
                     let resp = ui.add(egui::Label::new(text("Actions", 12.0, REGULAR).color(p.muted)).sense(Sense::click()));
                     if resp.on_hover_cursor(CursorIcon::PointingHand).clicked() {
-                        self.actions = if self.actions.is_some() { None } else { Some(super::ActionsPanel { query: String::new(), selected: 0 }) };
+                        self.actions =
+                            if self.actions.is_some() { None } else { Some(super::ActionsPanel { query: String::new(), selected: 0 }) };
                     }
                     ui.add_space(6.0);
                     let (sep, _) = ui.allocate_exact_size(vec2(1.0, 16.0), Sense::hover());
@@ -869,54 +961,68 @@ impl Launcher {
                 .inner_margin(Margin::same(6))
                 .shadow(egui::Shadow { offset: [0, 8], blur: 28, spread: 0, color: Color32::from_black_alpha(150) })
                 .show(ui, |ui| {
-                ui.set_width(w - 12.0);
-                ui.set_max_height(h);
-                ui.spacing_mut().item_spacing.y = 0.0;
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    ui.add(egui::Label::new(theme::eyebrow(&title)).truncate());
-                });
-                ui.add_space(4.0);
-                ScrollArea::vertical().max_height(h - 56.0).show(ui, |ui| {
-                    for (i, a) in shown.iter().enumerate() {
-                        let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
-                        if i == panel.selected {
-                            ui.painter().rect_filled(r, 7, p.knob);
-                        } else if resp.hovered() {
-                            ui.painter().rect_filled(r, 7, p.chip);
+                    ui.set_width(w - 12.0);
+                    ui.set_max_height(h);
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(8.0);
+                        ui.add(egui::Label::new(theme::eyebrow(&title)).truncate());
+                    });
+                    ui.add_space(4.0);
+                    ScrollArea::vertical().max_height(h - 56.0).show(ui, |ui| {
+                        for (i, a) in shown.iter().enumerate() {
+                            let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+                            if i == panel.selected {
+                                ui.painter().rect_filled(r, 7, p.knob);
+                            } else if resp.hovered() {
+                                ui.painter().rect_filled(r, 7, p.chip);
+                            }
+                            let ir = Rect::from_center_size(pos2(r.left() + 18.0, r.center().y), vec2(15.0, 15.0));
+                            icons.paint(ui.painter(), &Img::Symbol(a.symbol), ir, p.muted);
+                            let color = if a.run_is_destructive() { p.danger } else { p.ink };
+                            ui.painter().text(
+                                pos2(r.left() + 36.0, r.center().y),
+                                Align2::LEFT_CENTER,
+                                &a.title,
+                                FontId::proportional(12.5),
+                                color,
+                            );
+                            let caps = if i == 0 { vec!["↵".to_string()] } else { a.shortcut.map(|s| s.caps()).unwrap_or_default() };
+                            let mut x = r.right() - 8.0;
+                            for c in caps.iter().rev() {
+                                let g = ui.painter().layout_no_wrap(c.clone(), FontId::monospace(11.0), p.muted);
+                                let cw = (g.size().x + 10.0).max(20.0);
+                                let cr = Rect::from_min_size(pos2(x - cw, r.center().y - 10.0), vec2(cw, 20.0));
+                                ui.painter().rect_filled(cr, 5, p.chip);
+                                ui.painter().galley(cr.center() - g.size() / 2.0, g, p.muted);
+                                x -= cw + 3.0;
+                            }
+                            if resp.clicked() {
+                                run = Some(a.clone());
+                            }
+                            if resp.hovered() && ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
+                                panel.selected = i;
+                            }
                         }
-                        let ir = Rect::from_center_size(pos2(r.left() + 18.0, r.center().y), vec2(15.0, 15.0));
-                        icons.paint(ui.painter(), &Img::Symbol(a.symbol), ir, p.muted);
-                        let color = if a.run_is_destructive() { p.danger } else { p.ink };
-                        ui.painter().text(pos2(r.left() + 36.0, r.center().y), Align2::LEFT_CENTER, &a.title, FontId::proportional(12.5), color);
-                        let caps = if i == 0 { vec!["↵".to_string()] } else { a.shortcut.map(|s| s.caps()).unwrap_or_default() };
-                        let mut x = r.right() - 8.0;
-                        for c in caps.iter().rev() {
-                            let g = ui.painter().layout_no_wrap(c.clone(), FontId::monospace(11.0), p.muted);
-                            let cw = (g.size().x + 10.0).max(20.0);
-                            let cr = Rect::from_min_size(pos2(x - cw, r.center().y - 10.0), vec2(cw, 20.0));
-                            ui.painter().rect_filled(cr, 5, p.chip);
-                            ui.painter().galley(cr.center() - g.size() / 2.0, g, p.muted);
-                            x -= cw + 3.0;
-                        }
-                        if resp.clicked() {
-                            run = Some(a.clone());
-                        }
-                        if resp.hovered() && ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO) {
-                            panel.selected = i;
-                        }
+                    });
+                    ui.add_space(4.0);
+                    theme::hairline(ui);
+                    ui.add_space(6.0);
+                    let resp = ui.add(
+                        TextEdit::singleline(&mut panel.query)
+                            .id(Id::unique("actions-q"))
+                            .frame(Frame::NONE)
+                            .font(FontId::proportional(12.5))
+                            .margin(Margin::symmetric(8, 4))
+                            .desired_width(f32::INFINITY)
+                            .hint_text(text("Search for actions…", 12.5, REGULAR).color(p.dim)),
+                    );
+                    resp.request_focus();
+                    if resp.changed() {
+                        panel.selected = 0;
                     }
                 });
-                ui.add_space(4.0);
-                theme::hairline(ui);
-                ui.add_space(6.0);
-                let resp = ui.add(TextEdit::singleline(&mut panel.query).id(Id::unique("actions-q")).frame(Frame::NONE).font(FontId::proportional(12.5)).margin(Margin::symmetric(8, 4)).desired_width(f32::INFINITY).hint_text(text("Search for actions…", 12.5, REGULAR).color(p.dim)));
-                resp.request_focus();
-                if resp.changed() {
-                    panel.selected = 0;
-                }
-            });
         });
         if let Some(a) = run {
             self.run_action(&id, a, now);
@@ -934,23 +1040,28 @@ impl Launcher {
         let size = vec2(340.0, 150.0);
         let mut decided = None;
         egui::Area::new(Id::unique("confirm")).order(Order::Foreground).fixed_pos(screen.center() - size / 2.0).show(ctx, |ui| {
-            Frame::new().fill(Color32::from_rgb(0x16, 0x16, 0x17)).stroke(Stroke::new(1.0, p.line)).corner_radius(14).inner_margin(Margin::same(20)).show(ui, |ui| {
-                ui.set_width(size.x - 40.0);
-                ui.label(text(def.title, 15.0, SEMIBOLD).color(p.bright));
-                ui.add_space(4.0);
-                theme::para(ui, theme::caption(def.confirm.unwrap_or("Are you sure?")));
-                ui.add_space(16.0);
-                ui.horizontal(|ui| {
-                    if theme::button(ui, "Cancel  esc", theme::Kind::Secondary).clicked() {
-                        decided = Some(false);
-                    }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if theme::button(ui, &format!("{}  ↵", def.title), theme::Kind::Primary).clicked() {
-                            decided = Some(true);
+            Frame::new()
+                .fill(Color32::from_rgb(0x16, 0x16, 0x17))
+                .stroke(Stroke::new(1.0, p.line))
+                .corner_radius(14)
+                .inner_margin(Margin::same(20))
+                .show(ui, |ui| {
+                    ui.set_width(size.x - 40.0);
+                    ui.label(text(def.title, 15.0, SEMIBOLD).color(p.bright));
+                    ui.add_space(4.0);
+                    theme::para(ui, theme::caption(def.confirm.unwrap_or("Are you sure?")));
+                    ui.add_space(16.0);
+                    ui.horizontal(|ui| {
+                        if theme::button(ui, "Cancel  esc", theme::Kind::Secondary).clicked() {
+                            decided = Some(false);
                         }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if theme::button(ui, &format!("{}  ↵", def.title), theme::Kind::Primary).clicked() {
+                                decided = Some(true);
+                            }
+                        });
                     });
                 });
-            });
         });
         match decided {
             Some(true) => self.run_cmd(c, now),
@@ -962,15 +1073,28 @@ impl Launcher {
 
 impl Action {
     fn run_is_destructive(&self) -> bool {
-        matches!(self.run, Run::Trash(_) | Run::DeleteClip(_) | Run::DeleteColor(_) | Run::DeleteQuicklink(_) | Run::DeleteSnippet(_) | Run::QuitApp(_, true))
-            || matches!(self.run, Run::Cmd(Cmd::ClearClipboardHistory))
+        matches!(
+            self.run,
+            Run::Trash(_)
+                | Run::DeleteClip(_)
+                | Run::DeleteColor(_)
+                | Run::DeleteQuicklink(_)
+                | Run::DeleteSnippet(_)
+                | Run::QuitApp(_, true)
+        ) || matches!(self.run, Run::Cmd(Cmd::ClearClipboardHistory))
     }
 }
 
 fn section_title(ui: &mut Ui, title: &str) {
     let p = pal();
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-    ui.painter().text(pos2(r.left() + 10.0, r.bottom() - 9.0), Align2::LEFT_CENTER, title.to_lowercase(), FontId::proportional(11.0), p.dim);
+    ui.painter().text(
+        pos2(r.left() + 10.0, r.bottom() - 9.0),
+        Align2::LEFT_CENTER,
+        title.to_lowercase(),
+        FontId::proportional(11.0),
+        p.dim,
+    );
 }
 
 fn paint_icon(ui: &Ui, icons: &mut Icons, icon: &Icon, r: Rect, selected: bool) {
@@ -1023,10 +1147,28 @@ fn row(ui: &mut Ui, icons: &mut Icons, it: &Item, selected: bool, hotkey: Option
                 let w = s.chars().count() as f32 * size * 0.6;
                 if w > max { (size * max / w).max(11.0) } else { size }
             };
-            painter.text(left.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, input, FontId::proportional(fit(input, half - 30.0, 17.0)), p.ink);
-            painter.text(right.center() - vec2(0.0, 8.0), Align2::CENTER_CENTER, &answer.text, FontId::proportional(fit(&answer.text, half - 30.0, 24.0)), p.bright);
+            painter.text(
+                left.center() - vec2(0.0, 8.0),
+                Align2::CENTER_CENTER,
+                input,
+                FontId::proportional(fit(input, half - 30.0, 17.0)),
+                p.ink,
+            );
+            painter.text(
+                right.center() - vec2(0.0, 8.0),
+                Align2::CENTER_CENTER,
+                &answer.text,
+                FontId::proportional(fit(&answer.text, half - 30.0, 24.0)),
+                p.bright,
+            );
             painter.text(left.center_bottom() - vec2(0.0, 16.0), Align2::CENTER_CENTER, "Expression", FontId::proportional(10.5), p.dim);
-            painter.text(right.center_bottom() - vec2(0.0, 16.0), Align2::CENTER_CENTER, answer.unit.as_deref().unwrap_or("Answer"), FontId::proportional(10.5), p.dim);
+            painter.text(
+                right.center_bottom() - vec2(0.0, 16.0),
+                Align2::CENTER_CENTER,
+                answer.unit.as_deref().unwrap_or("Answer"),
+                FontId::proportional(10.5),
+                p.dim,
+            );
             painter.vline(card.center().x, (card.top() + 10.0)..=(card.bottom() - 10.0), Stroke::new(1.0, p.line));
             let ar = Rect::from_center_size(card.center(), vec2(24.0, 24.0));
             painter.rect_filled(ar, 12, p.elevated);
@@ -1038,7 +1180,13 @@ fn row(ui: &mut Ui, icons: &mut Icons, it: &Item, selected: bool, hotkey: Option
             let [rr, gg, bb, aa] = c.u8();
             painter.rect_filled(sw, 9, Color32::from_rgba_unmultiplied(rr, gg, bb, aa));
             painter.rect_stroke(sw, 9, Stroke::new(1.0, p.line), StrokeKind::Inside);
-            painter.text(pos2(sw.right() + 14.0, bg.center().y - 9.0), Align2::LEFT_CENTER, &it.title, FontId::proportional(15.0), p.bright);
+            painter.text(
+                pos2(sw.right() + 14.0, bg.center().y - 9.0),
+                Align2::LEFT_CENTER,
+                &it.title,
+                FontId::proportional(15.0),
+                p.bright,
+            );
             let others = [ColorFormat::Rgb, ColorFormat::Hsl, ColorFormat::Oklch].map(|f| c.format(f)).join("   ");
             painter.text(pos2(sw.right() + 14.0, bg.center().y + 11.0), Align2::LEFT_CENTER, others, FontId::proportional(11.0), p.muted);
             painter.text(pos2(bg.right() - 14.0, bg.center().y), Align2::RIGHT_CENTER, "Color", FontId::proportional(11.0), p.dim);

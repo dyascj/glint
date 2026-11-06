@@ -51,6 +51,9 @@ enum Tok {
 fn lex(s: &str) -> Option<Vec<Tok>> {
     let c: Vec<char> = s.chars().collect();
     let mut out = Vec::new();
+    // For each open paren, whether it starts a function's argument list, where
+    // a comma separates arguments instead of grouping thousands: max(1,234).
+    let mut parens: Vec<bool> = Vec::new();
     let mut i = 0;
     while i < c.len() {
         let ch = c[i];
@@ -59,8 +62,12 @@ fn lex(s: &str) -> Option<Vec<Tok>> {
         } else if ch.is_ascii_digit() || (ch == '.' && c.get(i + 1).is_some_and(char::is_ascii_digit)) {
             let start = i;
             // A comma followed by exactly three digits is a thousands separator.
+            let in_args = parens.last() == Some(&true);
             let grouping = |i: usize| {
-                c[i] == ',' && c.get(i + 1..i + 4).is_some_and(|w| w.iter().all(char::is_ascii_digit)) && c.get(i + 4).is_none_or(|d| !d.is_ascii_digit())
+                !in_args
+                    && c[i] == ','
+                    && c.get(i + 1..i + 4).is_some_and(|w| w.iter().all(char::is_ascii_digit))
+                    && c.get(i + 4).is_none_or(|d| !d.is_ascii_digit())
             };
             while i < c.len() && (c[i].is_ascii_digit() || c[i] == '.' || grouping(i)) {
                 i += 1;
@@ -80,6 +87,13 @@ fn lex(s: &str) -> Option<Vec<Tok>> {
                 out.push(Tok::Ident(word));
             }
         } else {
+            match ch {
+                '(' => parens.push(matches!(out.last(), Some(Tok::Ident(_)))),
+                ')' => {
+                    parens.pop();
+                }
+                _ => {}
+            }
             out.push(match ch {
                 '+' | '-' | '*' | '/' | '^' => Tok::Op(ch),
                 '×' => Tok::Op('*'),
@@ -130,40 +144,32 @@ impl Parser<'_> {
     }
 
     fn term(&mut self) -> Option<f64> {
-        let mut v = self.power()?;
+        let mut v = self.unary()?;
         loop {
             match self.peek() {
                 Some(Tok::Op('*')) => {
                     self.i += 1;
-                    v *= self.power()?;
+                    v *= self.unary()?;
                 }
                 Some(Tok::Op('/')) => {
                     self.i += 1;
-                    v /= self.power()?;
+                    v /= self.unary()?;
                 }
                 Some(Tok::Ident(w)) if w == "mod" => {
                     self.i += 1;
-                    v %= self.power()?;
+                    v %= self.unary()?;
                 }
                 // "20% of 150"
                 Some(Tok::Ident(w)) if w == "of" => {
                     self.i += 1;
-                    v *= self.power()?;
+                    v *= self.unary()?;
                 }
                 _ => return Some(v),
             }
         }
     }
 
-    fn power(&mut self) -> Option<f64> {
-        let base = self.unary()?;
-        if self.eat(&Tok::Op('^')) {
-            let exp = self.power()?;
-            return Some(base.powf(exp));
-        }
-        Some(base)
-    }
-
+    /// The sign binds looser than `^`, so -2^2 is -4 and 2^-1 still works.
     fn unary(&mut self) -> Option<f64> {
         if self.eat(&Tok::Op('-')) {
             return Some(-self.unary()?);
@@ -171,11 +177,20 @@ impl Parser<'_> {
         if self.eat(&Tok::Op('+')) {
             return self.unary();
         }
-        let mut v = self.atom()?;
+        self.power()
+    }
+
+    /// Right-associative: 2^3^2 is 2^9.
+    fn power(&mut self) -> Option<f64> {
+        let mut base = self.atom()?;
         if self.eat(&Tok::Percent) {
-            v /= 100.0;
+            base /= 100.0;
         }
-        Some(v)
+        if self.eat(&Tok::Op('^')) {
+            let exp = self.unary()?;
+            return Some(base.powf(exp));
+        }
+        Some(base)
     }
 
     fn atom(&mut self) -> Option<f64> {
@@ -331,6 +346,9 @@ fn convert(q: &str) -> Option<Answer> {
     } else {
         v * from.2 / to.2
     };
+    if !out.is_finite() {
+        return None;
+    }
     let short = to.0[0];
     Some(Answer { text: format!("{} {short}", pretty(out)), raw: plain(out), unit: Some(to.3.to_string()) })
 }
@@ -399,6 +417,11 @@ mod tests {
         assert_eq!(val("max(1, 7, 3)"), "7");
         assert_eq!(val("17 mod 5"), "2");
         assert_eq!(val("1/3"), "0.3333333333");
+        assert_eq!(val("-2^2"), "-4", "the sign binds looser than ^");
+        assert_eq!(val("2^-1"), "0.5");
+        assert_eq!(val("max(1,234)"), "234", "commas separate function arguments");
+        assert_eq!(val("min(5,100)"), "5");
+        assert_eq!(val("(1,000 + 1) * 2"), "2002");
     }
 
     #[test]
@@ -429,6 +452,7 @@ mod tests {
         assert_eq!(val("2 gb to mb"), "2000");
         assert_eq!(val("90 min to hours"), "1.5");
         assert_eq!(val("3 kg to feet"), "none", "different dimensions");
+        assert_eq!(val("10^400 m to km"), "none", "overflow is not an answer");
         assert_eq!(evaluate("1500 m to km").unwrap().text, "1.5 km");
         assert_eq!(evaluate("1234567 * 1").unwrap().text, "1,234,567");
     }

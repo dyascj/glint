@@ -5,6 +5,15 @@ use eframe::egui::{self, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, ve
 use super::theme::{REGULAR, galley, pal, text};
 use crate::settings::{hotkey_from, hotkey_parts};
 
+fn recording_id() -> egui::Id {
+    egui::Id::unique("glint.hotkey.recording")
+}
+
+/// Whether a recorder was listening in the last frame or two.
+pub fn recording(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<u64>(recording_id())).is_some_and(|f| f + 2 >= ctx.cumulative_frame_nr())
+}
+
 /// egui key name -> the global-hotkey name for it.
 fn key_name(k: egui::Key) -> String {
     match k {
@@ -12,6 +21,10 @@ fn key_name(k: egui::Key) -> String {
         egui::Key::OpenBracket => "BracketLeft".into(),
         egui::Key::CloseBracket => "BracketRight".into(),
         egui::Key::Backtick => "Backquote".into(),
+        egui::Key::ArrowUp => "ArrowUp".into(),
+        egui::Key::ArrowDown => "ArrowDown".into(),
+        egui::Key::ArrowLeft => "ArrowLeft".into(),
+        egui::Key::ArrowRight => "ArrowRight".into(),
         other => other.name().to_string(),
     }
 }
@@ -52,6 +65,9 @@ pub fn recorder(ui: &mut Ui, salt: impl std::hash::Hash + std::fmt::Debug, value
     }
     if recording {
         ui.ctx().request_repaint();
+        // Tells the window chrome not to treat ⌘W or ⌘Q as close while recording.
+        let frame = ui.ctx().cumulative_frame_nr();
+        ui.ctx().data_mut(|d| d.insert_temp(recording_id(), frame));
     }
     if resp.clicked() {
         ui.data_mut(|d| d.insert_temp(id, !recording));
@@ -61,7 +77,10 @@ pub fn recorder(ui: &mut Ui, salt: impl std::hash::Hash + std::fmt::Debug, value
             let pos = i.events.iter().position(|e| matches!(e, egui::Event::Key { pressed: true, .. }));
             pos.map(|p| i.events.remove(p))
         });
-        if let Some(egui::Event::Key { key, modifiers: m, .. }) = pressed {
+        if let Some(egui::Event::Key { key, physical_key, modifiers: m, .. }) = pressed {
+            // Global hotkeys are key positions, so record where the key is, not
+            // what it types: ⌥A on AZERTY, and ⌃⇧1 rather than "!".
+            let key = physical_key.unwrap_or(key);
             if key == egui::Key::Escape && !m.any() {
                 ui.data_mut(|d| d.insert_temp(id, false));
             } else if key == egui::Key::Backspace && !m.any() {

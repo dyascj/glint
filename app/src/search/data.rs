@@ -107,7 +107,8 @@ impl Quicklink {
 pub const QUICKLINKS: &str = "quicklinks.json";
 
 pub fn load_quicklinks() -> Vec<Quicklink> {
-    let stored: Option<Vec<Quicklink>> = std::fs::read_to_string(crate::paths::data(QUICKLINKS)).ok().and_then(|t| serde_json::from_str(&t).ok());
+    let stored: Option<Vec<Quicklink>> =
+        std::fs::read_to_string(crate::paths::data(QUICKLINKS)).ok().and_then(|t| serde_json::from_str(&t).ok());
     stored.unwrap_or_else(default_quicklinks)
 }
 
@@ -164,9 +165,10 @@ pub fn save_snippets(s: &[Snippet]) {
     let _ = prefs::save(SNIPPETS, &s);
 }
 
-/// Fills placeholders. `clipboard` is the current clipboard text.
+/// Fills placeholders. `clipboard` is the current clipboard text; it goes in
+/// last so braces inside it are pasted as typed, not expanded.
 pub fn expand(text: &str, clipboard: &str, date: &str, time: &str) -> String {
-    text.replace("{clipboard}", clipboard).replace("{datetime}", &format!("{date} {time}")).replace("{date}", date).replace("{time}", time)
+    text.replace("{datetime}", &format!("{date} {time}")).replace("{date}", date).replace("{time}", time).replace("{clipboard}", clipboard)
 }
 
 // ---- clipboard history ----
@@ -336,5 +338,6 @@ mod tests {
         let q = Quicklink { name: "G".into(), url: "https://g.com/?q={query}".into(), icon: String::new() };
         assert_eq!(q.url_for("rust egui & co"), "https://g.com/?q=rust%20egui%20%26%20co");
         assert_eq!(expand("Hi {clipboard} on {date}", "CJ", "2026-10-19", "09:00"), "Hi CJ on 2026-10-19");
+        assert_eq!(expand("{clipboard}", "{date}", "2026-10-19", "09:00"), "{date}", "clipboard text is pasted as is");
     }
 }

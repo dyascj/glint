@@ -228,7 +228,8 @@ pub struct MenuItem {
     pub elem: Elem,
 }
 
-const MENU_ATTRS: [&str; 7] = ["AXRole", "AXTitle", "AXEnabled", "AXChildren", "AXMenuItemCmdChar", "AXMenuItemCmdModifiers", "AXMenuItemCmdGlyph"];
+const MENU_ATTRS: [&str; 7] =
+    ["AXRole", "AXTitle", "AXEnabled", "AXChildren", "AXMenuItemCmdChar", "AXMenuItemCmdModifiers", "AXMenuItemCmdGlyph"];
 const MAX_ITEMS: usize = 4000;
 
 /// Every enabled item in `pid`'s menu bar, in menu order (the Apple menu
@@ -376,7 +377,7 @@ fn front_to_back() -> Vec<i32> {
     }
     let key = NSString::from_str("kCGWindowOwnerPID");
     // SAFETY: CFArray/CFDictionary are toll-free bridged to NSArray/NSDictionary.
-    let pids = unsafe {
+    unsafe {
         let arr: &NSArray<NSDictionary<NSString, objc2::runtime::AnyObject>> = &*list.cast();
         let mut pids = Vec::new();
         for d in arr.iter() {
@@ -389,8 +390,7 @@ fn front_to_back() -> Vec<i32> {
         }
         CFRelease(list);
         pids
-    };
-    pids
+    }
 }
 
 fn app_windows(a: &Running) -> Vec<Window> {
@@ -409,7 +409,14 @@ fn app_windows(a: &Running) -> Vec<Window> {
                 "" => a.name.clone(),
                 t => t.to_string(),
             };
-            Some(Window { title, app: a.name.clone(), pid: a.pid, app_path: a.path.clone(), minimized: minimized.bool().unwrap_or(false), elem: w })
+            Some(Window {
+                title,
+                app: a.name.clone(),
+                pid: a.pid,
+                app_path: a.path.clone(),
+                minimized: minimized.bool().unwrap_or(false),
+                elem: w,
+            })
         })
         .collect()
 }

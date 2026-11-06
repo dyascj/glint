@@ -29,7 +29,10 @@ pub enum Icon {
 pub enum Kind {
     Row,
     /// The calculator's two-sided answer card.
-    Calc { input: String, answer: calc::Answer },
+    Calc {
+        input: String,
+        answer: calc::Answer,
+    },
     /// A color typed into the search bar.
     Color(Rgb),
 }
@@ -113,8 +116,8 @@ pub enum Run {
     Quicklink(usize, Option<String>),
     PutInSearch(String),
     QuitApp(i32, bool),
-    PinClip(usize),
-    DeleteClip(usize),
+    PinClip(ClipRef),
+    DeleteClip(ClipRef),
     DeleteColor(usize),
     Ramp(Rgb),
     DeleteQuicklink(usize),
@@ -130,12 +133,12 @@ pub enum Run {
     /// Copies a file itself and pastes it into the front app.
     PasteFile(PathBuf),
     /// Clipboard history entry by index: paste it, or copy it back.
-    PasteClip(usize),
+    PasteClip(ClipRef),
     /// Adds (true) or removes a root item from Favorites.
     Favorite(String, bool),
     /// Moves a favorite up (-1) or down (1).
     MoveFavorite(String, isize),
-    CopyClip(usize),
+    CopyClip(ClipRef),
     /// Clicks an item in the front app's menu bar.
     PressMenu(Elem),
     /// Brings a window (of the app with this pid) to the front.
@@ -148,6 +151,27 @@ pub struct Action {
     pub symbol: &'static str,
     pub shortcut: Option<Shortcut>,
     pub run: Run,
+}
+
+/// A clipboard entry by position, checked against when and how long it was,
+/// so an action opened before a new copy arrives still hits the same entry.
+/// (Cheaper than carrying the text, which can be long, in every row.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClipRef {
+    i: usize,
+    at: u64,
+    len: usize,
+}
+
+impl ClipRef {
+    pub fn new(i: usize, c: &Clip) -> ClipRef {
+        ClipRef { i, at: c.at, len: c.text.len() }
+    }
+
+    pub fn find(self, clips: &[Clip]) -> Option<usize> {
+        let same = |c: &Clip| c.at == self.at && c.text.len() == self.len;
+        if clips.get(self.i).is_some_and(same) { Some(self.i) } else { clips.iter().position(same) }
+    }
 }
 
 fn act(title: impl Into<String>, symbol: &'static str, shortcut: Option<Shortcut>, run: Run) -> Action {
@@ -243,7 +267,8 @@ pub fn file_item(p: &Path) -> Item {
     }
     actions.push(act("Move to Trash", "trash", Some(Shortcut::ctrl(Key::X)), Run::Trash(p.to_path_buf())));
     let mut it = Item::new(format!("file:{}", p.display()), name, Icon::Img(Img::File(p.to_path_buf())), actions).sub(parent);
-    it.accessory = if is_dir { "Folder".into() } else { p.extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_else(|| "File".into()) };
+    it.accessory =
+        if is_dir { "Folder".into() } else { p.extension().map(|e| e.to_string_lossy().to_uppercase()).unwrap_or_else(|| "File".into()) };
     it.detail = file_detail(p);
     it
 }
@@ -289,7 +314,11 @@ pub fn ago_secs(secs: u64) -> String {
 
 pub fn command_item(def: &commands::Def) -> Item {
     let id = def.id();
-    let title = if matches!(def.cmd, Cmd::Restart | Cmd::ShutDown | Cmd::LogOut | Cmd::EmptyTrash | Cmd::QuitAllApps) { "Run Command" } else { "Open Command" };
+    let title = if matches!(def.cmd, Cmd::Restart | Cmd::ShutDown | Cmd::LogOut | Cmd::EmptyTrash | Cmd::QuitAllApps) {
+        "Run Command"
+    } else {
+        "Open Command"
+    };
     let mut actions = vec![act(title, "return", None, Run::Cmd(def.cmd))];
     actions.extend(ranking_actions(&id));
     Item::new(id, def.title, Icon::Img(Img::Symbol(def.symbol)), actions).sub(def.subtitle).acc("Command")
@@ -480,15 +509,23 @@ pub fn root(query: &str, s: &Sources) -> Vec<Section> {
                 it
             })
             .collect();
-        let mut used: Vec<(i32, Src)> = candidates.iter().filter(|(_, id)| !s.favorites.contains(id)).filter_map(|(c, id)| {
-            let b = s.frecency.bonus(id);
-            (b > 0).then_some((b, *c))
-        }).collect();
-        used.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut used: Vec<(i32, Src)> = candidates
+            .iter()
+            .filter(|(_, id)| !s.favorites.contains(id))
+            .filter_map(|(c, id)| {
+                let b = s.frecency.bonus(id);
+                (b > 0).then_some((b, *c))
+            })
+            .collect();
+        used.sort_by_key(|a| std::cmp::Reverse(a.0));
         let mut suggestions: Vec<Item> = used.into_iter().take(6).map(|(_, c)| c.item(s)).collect();
         for cmd in STARTERS {
             let id = commands::def(cmd).id();
-            if suggestions.len() < 6 && !suggestions.iter().any(|i| i.id == id) && !s.settings.disabled.contains(&id) && !s.favorites.contains(&id) {
+            if suggestions.len() < 6
+                && !suggestions.iter().any(|i| i.id == id)
+                && !s.settings.disabled.contains(&id)
+                && !s.favorites.contains(&id)
+            {
                 suggestions.push(Src::Cmd(commands::ALL.iter().position(|d| d.cmd == cmd).unwrap_or(0)).item(s));
             }
         }
@@ -519,7 +556,15 @@ pub fn root(query: &str, s: &Sources) -> Vec<Section> {
         .into_iter()
         .filter_map(|(c, id)| {
             let alias = aliases.get(id.as_str()).map(|a| a.to_lowercase());
-            let alias_score = alias.as_deref().and_then(|a| if a == q { Some(5000) } else if a.starts_with(&q) { Some(1100) } else { None });
+            let alias_score = alias.as_deref().and_then(|a| {
+                if a == q {
+                    Some(5000)
+                } else if a.starts_with(&q) {
+                    Some(1100)
+                } else {
+                    None
+                }
+            });
             let base = fuzzy::score(&q, c.title(s), &c.keywords(s)).max(alias_score)?;
             Some((base + s.frecency.bonus(&id), c, alias))
         })
@@ -552,9 +597,25 @@ fn fallbacks(query: &str, s: &Sources) -> Vec<Item> {
         out.push(it);
     }
     let files = commands::def(Cmd::SearchFiles);
-    out.push(Item::new("", "Search Files", Icon::Img(Img::Symbol(files.symbol)), vec![act("Search Files", "magnifyingglass", None, Run::Cmd(Cmd::SearchFiles))]).acc("Fallback"));
+    out.push(
+        Item::new(
+            "",
+            "Search Files",
+            Icon::Img(Img::Symbol(files.symbol)),
+            vec![act("Search Files", "magnifyingglass", None, Run::Cmd(Cmd::SearchFiles))],
+        )
+        .acc("Fallback"),
+    );
     let emoji = commands::def(Cmd::SearchEmoji);
-    out.push(Item::new("", "Search Emoji & Symbols", Icon::Img(Img::Symbol(emoji.symbol)), vec![act("Search Emoji", "face.smiling", None, Run::Cmd(Cmd::SearchEmoji))]).acc("Fallback"));
+    out.push(
+        Item::new(
+            "",
+            "Search Emoji & Symbols",
+            Icon::Img(Img::Symbol(emoji.symbol)),
+            vec![act("Search Emoji", "face.smiling", None, Run::Cmd(Cmd::SearchEmoji))],
+        )
+        .acc("Fallback"),
+    );
     out
 }
 
@@ -574,10 +635,10 @@ pub fn clipboard_view(clips: &[Clip], q: &str) -> Vec<Section> {
         };
         // By index: a long clip isn't copied into every action, every frame.
         let mut actions = vec![
-            act("Paste to Active App", "doc.on.clipboard", None, Run::PasteClip(i)),
-            act("Copy to Clipboard", "doc.on.doc", Some(Shortcut::cmd(Key::Enter)), Run::CopyClip(i)),
-            act(if c.pinned { "Unpin" } else { "Pin" }, "pin", Some(Shortcut::cmd_shift(Key::P)), Run::PinClip(i)),
-            act("Delete Entry", "trash", Some(Shortcut::ctrl(Key::X)), Run::DeleteClip(i)),
+            act("Paste to Active App", "doc.on.clipboard", None, Run::PasteClip(ClipRef::new(i, c))),
+            act("Copy to Clipboard", "doc.on.doc", Some(Shortcut::cmd(Key::Enter)), Run::CopyClip(ClipRef::new(i, c))),
+            act(if c.pinned { "Unpin" } else { "Pin" }, "pin", Some(Shortcut::cmd_shift(Key::P)), Run::PinClip(ClipRef::new(i, c))),
+            act("Delete Entry", "trash", Some(Shortcut::ctrl(Key::X)), Run::DeleteClip(ClipRef::new(i, c))),
             act("Clear All History", "trash.slash", None, Run::Cmd(Cmd::ClearClipboardHistory)),
         ];
         let icon = if c.image.is_some() {
@@ -613,7 +674,9 @@ pub fn clipboard_view(clips: &[Clip], q: &str) -> Vec<Section> {
         it
     };
     // Images match on "image"; their text is only a file path.
-    let matches = |c: &&Clip| q.is_empty() || if c.image.is_some() { "image".contains(&q) || q.contains("image") } else { c.text.to_lowercase().contains(&q) };
+    let matches = |c: &&Clip| {
+        q.is_empty() || if c.image.is_some() { "image".contains(&q) || q.contains("image") } else { c.text.to_lowercase().contains(&q) }
+    };
     let pinned: Vec<Item> = clips.iter().enumerate().filter(|(_, c)| c.pinned).filter(|(_, c)| matches(c)).map(row).collect();
     let rest: Vec<Item> = clips.iter().enumerate().filter(|(_, c)| !c.pinned).filter(|(_, c)| matches(c)).map(row).collect();
     let mut s = Vec::new();
@@ -629,12 +692,13 @@ fn filter(q: &str, title: &str, extra: &[&str]) -> Option<i32> {
 }
 
 fn ranked(mut v: Vec<(i32, Item)>) -> Vec<Item> {
-    v.sort_by(|a, b| b.0.cmp(&a.0));
+    v.sort_by_key(|a| std::cmp::Reverse(a.0));
     v.into_iter().map(|(_, i)| i).collect()
 }
 
 pub fn quicklinks_view(links: &[Quicklink], q: &str) -> Vec<Section> {
-    let items = ranked(links.iter().enumerate().filter_map(|(i, l)| Some((filter(q, &l.name, &[&l.url])?, quicklink_item(i, l, None)))).collect());
+    let items =
+        ranked(links.iter().enumerate().filter_map(|(i, l)| Some((filter(q, &l.name, &[&l.url])?, quicklink_item(i, l, None)))).collect());
     vec![Section { title: "Quicklinks".into(), items }]
 }
 
@@ -660,10 +724,14 @@ pub fn snippets_view(snippets: &[Snippet], q: &str) -> Vec<Section> {
 }
 
 pub fn extensions_view(scripts: &[Script], inline: &HashMap<PathBuf, String>, q: &str) -> Vec<Section> {
-    let items = ranked(scripts.iter().enumerate().filter_map(|(i, s)| Some((filter(q, &s.title, &[])?, script_item(i, s, inline)))).collect());
+    let items =
+        ranked(scripts.iter().enumerate().filter_map(|(i, s)| Some((filter(q, &s.title, &[])?, script_item(i, s, inline)))).collect());
     let mut out = vec![Section { title: format!("Extensions · {}", scripts.len()), items }];
     let tools = [Cmd::CreateExtension, Cmd::OpenExtensionsFolder, Cmd::ReloadExtensions];
-    out.push(Section { title: "Manage".into(), items: tools.iter().map(|c| command_item(commands::def(*c))).filter(|it| filter(q, &it.title, &[]).is_some()).collect() });
+    out.push(Section {
+        title: "Manage".into(),
+        items: tools.iter().map(|c| command_item(commands::def(*c))).filter(|it| filter(q, &it.title, &[]).is_some()).collect(),
+    });
     out
 }
 
@@ -690,7 +758,8 @@ pub fn processes_view(running: &[Running], q: &str) -> Vec<Section> {
 /// The row that asks for Accessibility when a view can't work without it.
 fn needs_access(what: &str) -> Vec<Section> {
     let actions = vec![act("Open Accessibility Settings", "lock.open", None, Run::OpenUrl(crate::macos::ACCESSIBILITY_URL.into()))];
-    let it = Item::new("", "Allow Accessibility Access", Icon::Img(Img::Symbol("hand.raised")), actions).sub(format!("Glint needs it to {what}"));
+    let it = Item::new("", "Allow Accessibility Access", Icon::Img(Img::Symbol("hand.raised")), actions)
+        .sub(format!("Glint needs it to {what}"));
     vec![Section { title: "Accessibility".into(), items: vec![it] }]
 }
 
@@ -712,7 +781,10 @@ pub fn menus_view(menus: Option<&[MenuItem]>, error: Option<&str>, trusted: bool
                     act("Run Menu Item", "filemenu.and.selection", None, Run::PressMenu(m.elem.clone())),
                     act("Copy Name", "doc.on.doc", Some(Shortcut::cmd_shift(Key::C)), Run::Copy(m.title.clone())),
                 ];
-                Some((score, Item::new("", &m.title, Icon::Img(Img::Symbol("filemenu.and.selection")), actions).sub(parents).acc(&m.shortcut)))
+                Some((
+                    score,
+                    Item::new("", &m.title, Icon::Img(Img::Symbol("filemenu.and.selection")), actions).sub(parents).acc(&m.shortcut),
+                ))
             })
             .collect(),
     );
@@ -752,9 +824,16 @@ pub fn calculations_view(list: &[crate::search::data::Calculation], q: &str) -> 
             let actions = vec![
                 act("Copy Answer", "doc.on.doc", None, Run::Copy(c.result.clone())),
                 act("Paste Answer", "doc.on.clipboard", Some(Shortcut::cmd(Key::Enter)), Run::Paste(c.result.clone())),
-                act("Put Calculation in Search Bar", "magnifyingglass", Some(Shortcut::cmd_shift(Key::Enter)), Run::PutInSearch(c.input.clone())),
+                act(
+                    "Put Calculation in Search Bar",
+                    "magnifyingglass",
+                    Some(Shortcut::cmd_shift(Key::Enter)),
+                    Run::PutInSearch(c.input.clone()),
+                ),
             ];
-            Item::new("", &c.result, Icon::Img(Img::Symbol("equal")), actions).sub(&c.input).acc(ago_secs(crate::search::data::now().saturating_sub(c.at)))
+            Item::new("", &c.result, Icon::Img(Img::Symbol("equal")), actions)
+                .sub(&c.input)
+                .acc(ago_secs(crate::search::data::now().saturating_sub(c.at)))
         })
         .collect();
     vec![Section { title: "History".into(), items }]
@@ -764,13 +843,19 @@ pub fn calculations_view(list: &[crate::search::data::Calculation], q: &str) -> 
 pub fn ramp_view(base: Rgb, primary: ColorFormat) -> Vec<Section> {
     let ramp = base.ramp();
     let css: String = ramp.iter().map(|(n, c)| format!("  --color-{n}: {};\n", c.format(primary))).collect();
-    let json: String = format!("{{\n{}\n}}", ramp.iter().map(|(n, c)| format!("  \"{n}\": \"{}\"", c.hex())).collect::<Vec<_>>().join(",\n"));
+    let json: String =
+        format!("{{\n{}\n}}", ramp.iter().map(|(n, c)| format!("  \"{n}\": \"{}\"", c.hex())).collect::<Vec<_>>().join(",\n"));
     let items = ramp
         .iter()
         .map(|(n, c)| {
             let mut actions = color_actions(*c, primary);
             actions.retain(|a| !matches!(a.run, Run::Ramp(_)));
-            actions.push(act("Copy Palette as CSS Variables", "curlybraces", Some(Shortcut::cmd_shift(Key::C)), Run::Copy(format!(":root {{\n{css}}}"))));
+            actions.push(act(
+                "Copy Palette as CSS Variables",
+                "curlybraces",
+                Some(Shortcut::cmd_shift(Key::C)),
+                Run::Copy(format!(":root {{\n{css}}}")),
+            ));
             actions.push(act("Copy Palette as JSON", "doc.plaintext", Some(Shortcut::cmd_shift(Key::J)), Run::Copy(json.clone())));
             Item::new("", n.to_string(), Icon::Swatch(*c), actions).sub(c.format(primary)).acc(c.format(ColorFormat::Oklch))
         })
@@ -852,6 +937,9 @@ mod tests {
         assert_eq!(empty[0].items[0].title, "Safari");
         assert!(empty[1].items.iter().all(|i| i.title != "Safari"), "a favorite isn't suggested twice");
         let found = root("saf", &src);
-        assert!(found[0].items[0].actions.iter().any(|a| a.run == Run::Favorite(favs[0].clone(), false)), "searching offers Remove from Favorites");
+        assert!(
+            found[0].items[0].actions.iter().any(|a| a.run == Run::Favorite(favs[0].clone(), false)),
+            "searching offers Remove from Favorites"
+        );
     }
 }

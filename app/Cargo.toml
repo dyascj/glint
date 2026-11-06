@@ -1,12 +1,15 @@
 [package]
 name = "glint"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2024"
-description = "A lightning fast launcher for macOS. Apps, files, colors and your own scripts, one keystroke away."
+description = "A lightning-fast launcher for macOS. Apps, files, colors and your own scripts, one keystroke away."
 license = "MIT"
 repository = "https://github.com/dyascj/glint"
 
-[dependencies]
+# Glint is a macOS app (AppKit, Spotlight, Accessibility), so every dependency
+# is macOS-only. Elsewhere, the crate stops at the compile_error! in lib.rs
+# instead of failing deep inside objc2 or gtk.
+[target.'cfg(target_os = "macos")'.dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 libc = "0.2"

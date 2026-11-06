@@ -81,7 +81,7 @@ fn chrome(ui: &egui::Ui) {
             crate::launcher::blur(&window, 23);
         }
     }
-    if ctx.input(|i| i.modifiers.command && (i.key_pressed(egui::Key::W) || i.key_pressed(egui::Key::Q))) {
+    if !hotkey::recording(ctx) && ctx.input(|i| i.modifiers.command && (i.key_pressed(egui::Key::W) || i.key_pressed(egui::Key::Q))) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
     #[cfg(debug_assertions)]
@@ -100,8 +100,10 @@ pub fn runtime() -> Runtime {
 /// Sends `sig` to the running launcher; false when it isn't running.
 pub fn signal_launcher(sig: i32) -> bool {
     let pid = runtime().pid;
-    // SAFETY: plain kill(2) to a pid the launcher published.
-    pid > 0 && unsafe { libc::kill(pid, 0) } == 0 && unsafe { libc::kill(pid, sig) } == 0
+    // SAFETY: plain kill(2) to a pid the launcher published, checked to still
+    // be Glint: after a crash the pid may belong to another process, which
+    // SIGUSR1 or SIGHUP would terminate.
+    pid > 0 && unsafe { libc::kill(pid, 0) } == 0 && crate::launcher::is_glint(pid) && unsafe { libc::kill(pid, sig) } == 0
 }
 
 /// Shows the launcher, starting it if needed. This window is the active app,
