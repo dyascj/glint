@@ -108,8 +108,14 @@ pub fn show(mtm: MainThreadMarker) {
     w.makeKeyAndOrderFront(None);
 }
 
-/// Hides Glint, which hands focus back to the app you came from.
+/// Hides Glint, which hands focus back to the app you came from. The launcher
+/// is ordered out first: a hidden app's windows come back on unhide, and
+/// the color sampler, alerts and reopening Glint.app all unhide it, which
+/// would bring back the launcher with nothing drawn in it.
 pub fn hide(mtm: MainThreadMarker) {
+    if let Some(w) = window(mtm) {
+        w.orderOut(None);
+    }
     NSApplication::sharedApplication(mtm).hide(None);
 }
 
